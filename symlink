@@ -1,0 +1,202 @@
+#!/bin/bash
+#shellcheck disable=SC2034,SC1091,SC2155
+# symlink - Tool to create symlinks in /usr/local/bin for executable files
+# Simplifies making scripts and tools available in system PATH
+set -euo pipefail
+[[ "$(whoami)" == 'root' || $EUID == 0 ]] || { exec sudo "$0" "$@"; exit; }
+readonly VERSION='1.1.0'
+readonly PRG0=$(readlink -en -- "$0")
+readonly PRG=$(basename "$PRG0")
+readonly PRGDIR=$(dirname "$PRG0")
+xcleanup() { local -i exitcode=${1:-0}; printf '\e[?25h'; exit $exitcode; }
+trap 'xcleanup $?' SIGINT EXIT
+declare -i VERBOSE=1
+error() { printf '%s: %s\n' "$PRG" "$*" >&2; }
+info() { printf '%s: %s\n' "$PRG" "$*" >&2; }
+trim() { local v="$*"; v="${v#"${v%%[![:blank:]]*}"}"; echo -n "${v%"${v##*[![:blank:]]}"}"; }
+die() { local -i exitcode=1; if (($#)); then exitcode=$1; shift; fi; if (($#)); then error "$@"; fi; exit $exitcode; }
+# ----------------------------------------------------------------------------------------
+
+usage() { cat <<EOT
+$PRG $VERSION - Create symlinks for executable files to /usr/local/bin
+
+Requires root privileges (automatically uses sudo if needed).
+
+Description:
+  This tool creates symbolic links in /usr/local/bin for executable files,
+  making them available in the system PATH. It can directly link individual
+  files or scan for .symlink configuration files.
+
+Usage: 
+  $PRG [-P] [-d] [-v|-q] scriptpath [scriptpath...]
+    Link specific executable files to /usr/local/bin.
+
+  $PRG -S [-P] [-d] [-v|-q] [startpath]
+    Scan for .symlink files and create links for files listed in them.
+    If startpath is omitted, the current directory is used.
+
+  $PRG -l [startpath]
+    List contents of all .symlink files found in startpath.
+
+Format of .symlink files:
+  Plain text files containing one executable filename per line.
+  Empty lines and lines starting with # are ignored.
+  Each file must be relative to the .symlink file's directory.
+
+Options:
+  -P, --no-prompt        Do not prompt to remove existing symlinks 
+                         or files in /usr/local/bin.
+  -S, --scan-symlink     Scan for .symlink files and process them.
+  -d, --delete-broken-symlinks
+                         Clean up broken symlinks in /usr/local/bin
+                         after creating new links.
+  -l, --list             List contents of all .symlink files.
+  -v, --verbose          Show detailed output (default).
+  -q, --quiet            Suppress informational messages.
+  -V, --version          Display version information.
+  -h, --help             Show this help message.
+
+Exit codes:
+  0: Success
+  1: General error
+  22: Invalid option
+
+EOT
+  exit 0
+}
+
+# Main function - processes command line options and executes requested operations
+main() {
+  local -a targets=()          # Array of script paths to symlink
+  local scriptpath scriptprg target='' yn
+  local -i prompt=1 scansymlink=0 delete_dead_symlinks=0 listit=0
+  (($#)) || usage              # Show usage if no arguments provided
+  
+  #shellcheck disable=SC2317
+  # Parse command line options
+  while (($#)); do case "$1" in
+    # Basic options
+    -h|--help) usage;; 
+    -v|--verbose) VERBOSE=1;; 
+    -q|--quiet) VERBOSE=0;; 
+    -V|--version) echo "$PRG $VERSION"; die 0;;
+    # Feature options
+    -l|--list)          listit=1;;
+    -P|--no-prompt)     prompt=0 ;;
+    -S|--scan-symlink)  scansymlink=1 ;;
+    -d|--delete-broken-symlinks) 
+                        delete_dead_symlinks=1 ;;
+    # Handle combined short options (e.g., -vPd)
+    -[hvqVPSd]*)        #shellcheck disable=SC2046 # expand aggregated short options
+                        set -- '' $(printf -- "-%c " $(grep -o . <<<"${1:1}")) "${@:2}" ;;
+    # Error handling
+    -*)                 die 22 "Invalid option '$1'" ;;
+    # Collect non-option arguments as target files/paths
+    *)                  targets+=("$1") ;;
+  esac; shift; done
+
+  # Process .symlink files if -l or -S options were used
+  if ((listit + scansymlink)); then
+    # Allow only one startpath for listing or scanning operations
+    ((${#targets[@]} > 1)) && die 1 "Can only specify one startpath for $( ((listit)) && echo "listing" || echo "scanning" )."
+    local startpath=$PWD
+    local symlink
+    # Use the provided path if available, otherwise use current directory
+    ((${#targets[@]})) && { startpath=${targets[0]}; targets=(); }
+    # Validate the startpath
+    startpath=$(readlink -en "$startpath" || die 1 "Invalid startpath '$startpath'")
+    [[ -d $startpath ]] || die 1 "'$startpath' must be a directory."
+
+    # Handle the -l (list) option - just show contents of .symlink files
+    ((listit)) && {
+      info "Listing contents of all .symlink files"
+      info "  starting in '$startpath'"
+      while read -r symlink; do
+        echo "$(basename -- "$symlink"):"
+        # Show non-empty, non-comment lines with indentation
+        grep -v '^$\|^#' "$symlink" | sed 's/^/    /'
+        echo
+      done < <(find "$startpath" -type f -name .symlink)
+      die 0
+    }
+
+    # Handle the -S (scan) option - process .symlink files
+    info "Scanning for all .symlink files starting in '$startpath'"
+    local -a symlinks=()
+    # Find all .symlink files
+    mapfile -t symlinks < <(find "$startpath"/ -type f -name '.symlink')
+    #shellcheck disable=SC2094
+    # Process each .symlink file
+    for symlink in "${symlinks[@]}"; do
+      while read -r script; do
+        # Trim whitespace and skip empty or comment lines
+        script=$(trim "$script")
+        [[ -z $script || ${script:0:1} == '#' ]] && continue
+        # Add script path (relative to .symlink file location) to targets
+        targets+=( "$(dirname -- "$symlink")"/"$script" )
+      done <"$symlink"
+    done
+  fi
+
+  # Show summary of what will be processed
+  ((VERBOSE)) && ((${#targets[@]})) && { echo "Creating symlinks for:"; echo "${targets[@]}"; echo; }
+
+  # Process each target file
+  for target in "${targets[@]}"; do
+    # Validate target file
+    [[ -n "$target" ]] || die 1 "Must specify target. $PRG --help"    
+    [[ -f "$target" ]] || die 1 "'$target' does not exist!"
+    [[ -x "$target" ]] || die 1 "'$target' must be an executable file."
+
+    # Get the base filename (will be the name of the symlink)
+    scriptprg=$(basename "$target")
+
+    # Get the full path to the target file
+    scriptpath=$(readlink -en -- "$target")
+
+    # Move to target directory for symlink creation
+    cd /usr/local/bin || die 1 "Dir '/usr/local/bin' does not exist!"
+
+    # Handle existing symlink with same name
+    if [[ -L "$scriptprg" ]]; then
+      info "Symlink '$scriptprg' exists." 
+      if ((prompt)); then
+        # Ask user whether to replace existing symlink
+        read -r -p "Remove? y/n " yn
+        [[ ${yn,,} == 'y' ]] || die 1
+      else
+        info "Removing symlink '$scriptprg'"
+      fi
+      rm "$scriptprg"
+    fi
+
+    # Handle existing regular file with same name
+    if [[ -f "$scriptprg" ]]; then
+      info "File '$PWD/$scriptprg' exists."
+      if ((prompt)); then
+        # Ask user whether to replace existing file
+        read -r -p "Remove? y/n " yn
+        [[ ${yn,,} == 'y' ]] || die 1
+      else
+        info "Removing file '$PWD/$scriptprg'"
+      fi
+      rm "$PWD/$scriptprg"
+    fi
+
+    # Create the symbolic link
+    info "Creating symlink for $scriptpath"
+    /usr/bin/ln -s "$scriptpath" "$scriptprg"
+
+    # Show details of the created symlink
+    ((VERBOSE)) && { /usr/bin/ls -lsd "$scriptprg"; echo; }
+  done
+
+  # Optionally clean up broken symlinks
+  if ((delete_dead_symlinks)); then
+    ((VERBOSE)) && echo "$PRG: Deleting all broken symlinks in /usr/local/bin"
+    find /usr/local/bin -xtype l -delete
+  fi
+}
+
+main "$@"
+#fin

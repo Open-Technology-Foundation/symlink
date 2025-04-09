@@ -1,1 +1,6 @@
+# Test symlink file
+# This lists executable files that should be symlinked
+
+# The symlink script itself
 symlink
+

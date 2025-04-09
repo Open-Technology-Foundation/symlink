@@ -1,6 +1,6 @@
-# symlink
+# Symlink Utility
 
-A Bash utility that manages executable files by creating symbolic links in `/usr/local/bin`, making them accessible system-wide via the command line.
+A robust Bash utility that manages executable files by creating symbolic links in `/usr/local/bin`, making them accessible system-wide via the command line. This tool is designed for system administrators who need to maintain collections of scripts and executables across multiple project directories.
 
 ## Primary Use Case: The `.symlink` File System
 
@@ -13,20 +13,23 @@ sudo symlink -SPd /ai/scripts
 ```
 
 This command:
-- Scans through the `/ai/scripts` directory tree looking for `.symlink` files
+- Scans through the `/ai/scripts` directory tree recursively looking for `.symlink` files
 - Creates symlinks in `/usr/local/bin` for each executable listed in those files
-- Skips confirmation prompts when replacing existing symlinks
-- Cleans up any broken symlinks in `/usr/local/bin`
+- Skips confirmation prompts when replacing existing symlinks (-P option)
+- Cleans up any broken symlinks in `/usr/local/bin` (-d option)
 
 ## Features
 
-- Scan directories for `.symlink` configuration files
+- Scan directories recursively for `.symlink` configuration files
 - Batch-create symlinks for executables listed in `.symlink` files
 - Create symlinks for individual executable files
 - Automatically handle permission elevation with sudo
 - Manage existing symlinks with optional user prompts
-- Clean up broken symlinks
+- Check for critical system files to prevent accidental overwriting
+- Clean up broken symlinks in target directory
 - Verbose or quiet output options
+- Dry-run mode to preview changes without making them
+- Debug mode for troubleshooting with detailed logs
 
 ## The `.symlink` File Format
 
@@ -103,10 +106,12 @@ sudo symlink /path/to/script1 /path/to/script2
 - `-P, --no-prompt`: Skip confirmation when removing existing symlinks
 - `-d, --delete-broken-symlinks`: Clean up broken symlinks in `/usr/local/bin`
 - `-l, --list`: List contents of all `.symlink` files without creating symlinks
+- `-n, --dry-run`: Show what would happen without making changes
 - `-v, --verbose`: Show detailed output (default)
 - `-q, --quiet`: Suppress informational messages
 - `-V, --version`: Show version information
 - `-h, --help`: Show help message
+- `--debug`: Enable debug mode with detailed logging
 
 ## Requirements
 
@@ -114,6 +119,31 @@ sudo symlink /path/to/script1 /path/to/script2
 - Root privileges (will auto-elevate with sudo if needed)
 - Write access to `/usr/local/bin`
 
+## Exit Codes
+
+The script uses standardized exit codes to communicate the result of operations:
+
+- `0`: Success
+- `1`: General error
+- `2`: Permission denied
+- `3`: File not found
+- `22`: Invalid option
+- `50`: No symlink files found
+
+## Debug Mode
+
+For troubleshooting, enable debug mode with the `--debug` flag or by setting the `SYMLINK_DEBUG` environment variable:
+
+```bash
+# Using flag
+symlink --debug -SPd /path/to/scripts
+
+# Using environment variable
+SYMLINK_DEBUG=1 symlink -SPd /path/to/scripts
+```
+
+Debug logs are written to a temporary file: `/tmp/symlink-trace-<username>-<pid>.log`
+
 ## License
 
-[MIT](LICENSE)
+[GPL-3.0](LICENSE) - GNU General Public License v3.0

@@ -3,164 +3,145 @@
 ![Version](https://img.shields.io/badge/Version-1.3.5-blue.svg)
 ![License](https://img.shields.io/badge/License-GPL--3.0-green.svg)
 
-A robust Bash utility that manages executable files by creating symbolic links in `/usr/local/bin`, making them accessible system-wide via the command line. This tool is designed for system administrators who need to maintain collections of scripts and executables across multiple project directories.
-
-## Version 1.3.5 Highlights
-
-- **Fixed Hanging Issues**: Eliminated hanging issues in broken symlink cleanup and file scanning
-- **Improved Non-Interactive Mode**: Auto-detects non-interactive use and adjusts behavior appropriately
-- **Enhanced Critical File Safety**: Added special handling for critical system files in all modes
-- **Better Error Handling**: More reliable detection and recovery from errors
-- **Enhanced Debug Mode**: Comprehensive logging with detailed troubleshooting information
-- **Batch Processing**: Efficient handling of multiple .symlink files with progress tracking
-- **Improved Documentation**: Expanded help output and clearer option descriptions
-- **Better Permission Handling**: Improved sudo elevation with proper environment preservation
+A Bash utility that creates symbolic links in `/usr/local/bin` for executables, making them accessible system-wide. Designed for system administrators managing scripts across multiple directories, with built-in safety features and batch processing capabilities.
 
 ## Primary Use Case: The `.symlink` File System
 
-The most important usage of `symlink` is to manage script availability through `.symlink` configuration files. System administrators create `.symlink` files in project directories, listing executable files that should be available system-wide. The `symlink` utility then processes these files to create the appropriate symlinks.
-
-A common administrative task would be:
-
-```bash
-sudo symlink -SPd /ai/scripts
-```
-
-This command:
-- Scans through the `/ai/scripts` directory tree recursively looking for `.symlink` files
-- Creates symlinks in `/usr/local/bin` for each executable listed in those files
-- Skips confirmation prompts when replacing existing symlinks (-P option)
-- Cleans up any broken symlinks in `/usr/local/bin` (-d option)
-
-## Features
-
-- **Recursive Scanning**: Find `.symlink` configuration files throughout directory trees
-- **Batch Processing**: Create multiple symlinks efficiently with batched operations
-- **Individual File Support**: Create symlinks for specific executable files
-- **Automatic Permissions**: Handle permission elevation with sudo transparently
-- **Interactive Control**: Manage existing symlinks with optional user prompts
-- **Safety Measures**: Prevent accidental overwriting of critical system files
-- **Maintenance Tools**: Clean up broken symlinks in target directories
-- **Flexible Output**: Choose between verbose, quiet, or debug output modes
-- **Dry-Run Mode**: Preview operations without making actual changes
-- **Advanced Debugging**: Comprehensive logging with detailed diagnostic information
-- **Batched Operations**: Efficiently process large numbers of symlink files
-- **Progress Tracking**: Keep track of operation progress with detailed status updates
-
-## The `.symlink` File Format
-
-Create a `.symlink` file in any project directory containing a list of executable files:
+The key feature of `symlink` is managing executables through `.symlink` configuration files. Create a `.symlink` file in any project directory listing executables that should be available system-wide:
 
 ```
 # This is a comment
-# Each line lists a script file that should be available system-wide
 script1
 tools/script2
 bin/tool3
 ```
 
-Key points:
-- Each file path should be relative to the `.symlink` file's location
+Process all `.symlink` files in a directory tree with one command:
+
+```bash
+sudo symlink -SPd /my/scripts
+```
+
+This:
+- Scans `/my/scripts` for `.symlink` files (safely limited to depth 5)
+- Creates symlinks in `/usr/local/bin` for each listed executable
+- Skips prompts when replacing existing symlinks (-P)
+- Cleans up broken symlinks (-d)
+- Automatically handles privileged operations via sudo
+
+## Features
+
+- **`.symlink` File Processing**: Central feature for managing multiple executables
+- **Batch Processing**: Efficiently creates multiple symlinks in a single operation
+- **Automatic Permissions**: Handles sudo elevation transparently
+- **Interactive Detection**: Auto-detects terminal interactivity and adjusts prompting
+- **Safety Measures**: Prevents overwriting critical system files without confirmation
+- **Timeout Protection**: Prevents hanging during path resolution operations
+- **Scan Depth Limiting**: Restricts directory scanning to safe depths (5 levels)
+- **Broken Link Cleanup**: Optional cleaning of dead symlinks in target directories
+- **Flexible Output**: Verbose, quiet, and debug output modes with color support
+- **Dry-Run Mode**: Preview operations without making changes
+- **Smart Summary**: Reports created, replaced, skipped, and error links
+
+## `.symlink` File Format
+
+```
+# Comment line
+script1
+tools/script2
+bin/tool3
+```
+
+- Paths should be relative to the `.symlink` file location
 - Empty lines and lines starting with `#` are ignored
-- Files must be executable
-- Absolute paths can be used but are generally discouraged
+- Leading/trailing whitespace is automatically trimmed
+- Files must be executable and accessible
+- Processing fails safely if files don't exist or aren't executable
 
 ## Installation
 
-1. Clone this repository or download the script:
-   ```bash
-   git clone https://github.com/user/symlink.git
-   cd symlink
-   ```
+```bash
+# Clone repository
+git clone https://github.com/user/symlink.git
+cd symlink
 
-2. Make the script executable:
-   ```bash
-   chmod +x ./symlink
-   ```
+# Make executable
+chmod +x ./symlink
 
-3. Optionally, make the script itself available system-wide:
-   ```bash
-   sudo ./symlink ./symlink
-   ```
+# Install system-wide (optional)
+sudo ./symlink ./symlink
 
-4. Verify installation:
-   ```bash
-   symlink --version
-   ```
+# Verify
+symlink --version
+```
 
 ### Quick Install
-For a quick one-line installation:
 ```bash
 curl -Lo /tmp/symlink https://raw.githubusercontent.com/user/symlink/main/symlink && chmod +x /tmp/symlink && sudo /tmp/symlink /tmp/symlink && symlink --version
 ```
 
 ## Usage Examples
 
-### Process `.symlink` Files (Primary Usage)
-
-Scan a directory and all subdirectories for `.symlink` files and process them:
-
+### Process `.symlink` Files
 ```bash
-# Most common usage pattern for system administrators
-sudo symlink -SPd /ai/scripts
+# Main usage - scan with no prompts and clean broken links
+sudo symlink -SPd /my/scripts
 
-# Scan current directory without prompt and clean broken links
+# Scan current directory
 sudo symlink -SPd
 
-# Scan a specific project directory with prompts
+# With interactive prompts
 sudo symlink -S /path/to/project
 ```
 
 ### List `.symlink` Files
-
-View the contents of all `.symlink` files without creating symlinks:
-
 ```bash
 symlink -l /path/to/projects
 ```
 
 ### Individual File Symlinking
-
-Create a symlink for a specific executable file (less common usage):
-
 ```bash
+# Single file
 sudo symlink /path/to/my/script
-```
 
-Create symlinks for multiple files:
-
-```bash
+# Multiple files
 sudo symlink /path/to/script1 /path/to/script2
 ```
 
 ## Command-Line Options
 
-| Option | Long Form | Description |
-|--------|-----------|-------------|
-| `-S` | `--scan-symlink` | Scan for `.symlink` files and process them (primary mode) |
-| `-P` | `--no-prompt` | Skip confirmation when removing existing symlinks |
-| `-d` | `--delete-broken-symlinks` | Clean up broken symlinks in `/usr/local/bin` |
-| `-l` | `--list` | List contents of all `.symlink` files without creating symlinks |
-| `-n` | `--dry-run` | Show what would happen without making changes |
-| `-v` | `--verbose` | Show detailed output (default) |
-| `-q` | `--quiet` | Suppress informational messages |
-| `-V` | `--version` | Show version information |
-| `-h` | `--help` | Show help message |
-| | `--debug` | Enable debug mode with detailed logging |
+| Option | Description |
+|--------|-------------|
+| `-S` | Scan for `.symlink` files and process them (limited to depth 5) |
+| `-P` | Skip confirmation prompts for existing symlinks |
+| `-d` | Clean up broken symlinks in target directory |
+| `-t` | Specify custom target directory (default: `/usr/local/bin`) |
+| `-l` | List contents of `.symlink` files only (no symlinking) |
+| `-n` | Dry-run mode (show what would happen without changes) |
+| `-v` | Verbose output with additional details |
+| `-q` | Quiet mode (suppresses informational messages) |
+| `-h` | Display help message |
+| `-V` | Show version information |
+| `--debug` | Debug mode with detailed logging to trace file |
 
-**Tip:** Options can be combined, such as `-SPd` for a no-prompt scan with broken link cleanup.
+**Tip:** Combine options: `-SPd` for no-prompt scan with cleanup
+
+## Safety Features
+
+- Critical system files (`bash`, `sh`, `ls`, `cp`, `mv`, `rm`, `sudo`, `chmod`, `chown`) require explicit confirmation
+- Scanning in target directory is restricted to prevent recursive issues
+- Path resolution operations have timeouts to prevent hanging
+- Batch processing with progress tracking for reliable completion
+- Pure Bash approach for broken symlink detection to avoid recursion issues
 
 ## Requirements
 
-- **Bash 4.0+**: Uses modern Bash features like arrays and parameter expansion
-- **Root Privileges**: Required for writing to system directories (auto-elevates with sudo)
-- **Write Access**: Needs permission to create files in `/usr/local/bin`
-- **Find Utility**: For recursive scanning of directories
-- **Readlink**: For resolving symbolic links and absolute paths
+- Bash 4.0+
+- Root privileges (auto-elevates with sudo)
+- Write access to `/usr/local/bin` (or custom target directory)
+- Standard Linux utilities (find, readlink, timeout)
 
 ## Exit Codes
-
-The script uses standardized exit codes to communicate the result of operations:
 
 - `0`: Success
 - `1`: General error
@@ -172,43 +153,26 @@ The script uses standardized exit codes to communicate the result of operations:
 ## Environment Variables
 
 ### Debug Mode
-
-For troubleshooting, enable debug mode with the `--debug` flag or by setting the `SYMLINK_DEBUG` environment variable:
-
 ```bash
-# Using flag
-symlink --debug -SPd /path/to/scripts
-
-# Using environment variable
+# Enable debug logging with environment variable
 SYMLINK_DEBUG=1 symlink -SPd /path/to/scripts
-```
 
-Debug logs are written to a temporary file: `/tmp/symlink-trace-<username>-<pid>.log`
+# Or use command-line flag (equivalent)
+symlink --debug -SPd /path/to/scripts
+```
+Debug logs are written to: `/tmp/symlink-trace-<username>-<pid>.log` and contain detailed execution information including:
+- Command-line arguments and options
+- Path resolution operations
+- Batch processing progress
+- Detailed error conditions
+- Final operation summary
 
 ### Critical Files Override
-
-By default, critical system files (like `bash`, `sh`, etc.) are protected even in non-interactive mode. To override this behavior in automated scripts, set the `SYMLINK_FORCE_CRITICAL` environment variable:
-
 ```bash
 # Force replacement of critical system files in non-interactive mode
 SYMLINK_FORCE_CRITICAL=1 symlink -SP /path/to/script
 ```
-
-**Caution:** Use this option with extreme care - replacing critical system files can break your system.
-
-The debug log contains comprehensive information including:
-- Command-line arguments
-- Sudo privilege detection and handling
-- Step-by-step operation traces
-- File path resolution details
-- Symlink creation process
-- Batch processing information
-- Exit status and error conditions
-
-To view the log in real-time while the script is running:
-```bash
-tail -f /tmp/symlink-trace-*.log
-```
+**Caution:** This bypasses important safety checks. Only use when absolutely necessary and when you fully understand the potential consequences. Replacing critical system files can break your system.
 
 ## License
 
@@ -216,66 +180,35 @@ tail -f /tmp/symlink-trace-*.log
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+Contributions welcome via Pull Requests.
 
 ## Changelog
 
 ### Version 1.3.5
-- Fixed critical hanging issue in broken symlink cleanup
-- Replaced 'find' command with pure Bash approach for symlink detection
-- Added auto-detection of non-interactive usage (via [[ -t 0 ]])
-- Improved handling of critical system files with additional safety measures
-- Enhanced error handling for both interactive and non-interactive modes
-- Added SYMLINK_FORCE_CRITICAL environment variable for advanced usage
-- Made prompting behavior consistent across all operation modes
-- Improved reliability of symlink detection by directly checking file properties
-
-### Version 1.3.4
-- Removed unsafe error handling practices that could mask failures
-- Completely rewrote core functions to avoid disabling error trapping
-- Improved reliability by handling command failures properly
-- Enhanced error reporting for better troubleshooting
-- Fixed potential issues with error propagation
-
-### Version 1.3.3
-- Completely rewrote directory scanning logic to prevent hanging
-- Changed from unlimited recursion to depth-limited approaches
-- Added safety checks when operating in or near target directory
-- Implemented direct file checks instead of find in risky locations
-- Added additional timeouts for find operations
-
-### Version 1.3.2
-- Fixed critical recursion issues that caused infinite hanging
-- Improved find command usage to prevent recursion into target directories
-- Limited search depth for broken symlinks to prevent traversal issues
-- Added better handling of directory path relationships to prevent loops
-- Enhanced directory path detection to handle special cases
-
-### Version 1.3.1
-- Added timeouts to prevent infinite hanging on path resolution
-- Improved error handling for path resolution edge cases
-- Enhanced handling of inaccessible directories
+- Fixed hanging issues in broken symlink cleanup and path resolution
+- Improved non-interactive mode detection with `[[ -t 0 ]]` terminal check
+- Enhanced critical file safety with confirmation requirements
+- Added the `SYMLINK_FORCE_CRITICAL` environment variable for automated scripts
+- Implemented timeout-based path resolution to prevent hanging
+- Added pure Bash approach for scanning to avoid recursion issues
+- Limited directory scanning depth to 5 levels for safety
+- Improved batch processing with progress tracking
+- Enhanced error handling with better reporting
 
 ### Version 1.3.0
-- Added detailed debug mode with comprehensive logging
-- Improved error handling and recovery
-- Implemented batch processing for multiple .symlink files
-- Enhanced documentation and help output
-- Fixed sudo elevation issues
-- Added progress tracking for operations
+- Added debug mode with comprehensive logging to trace files
+- Implemented batch processing for multiple `.symlink` files
+- Fixed sudo elevation issues with proper environment preservation
+- Added progress tracking for batch operations
+- Improved error handling and recovery strategies
 
 ### Version 1.2.0
-- Added support for dry-run mode
-- Improved handling of critical system files
-- Enhanced error reporting
+- Added dry-run mode for previewing operations without changes
+- Improved handling of critical system files with warnings
+- Enhanced error reporting and exit code consistency
 
 ### Version 1.1.0 
-- Added support for .symlink files
-- Implemented recursive directory scanning
-- Added broken symlink cleanup
+- Added `.symlink` file support for batch symlinking
+- Implemented directory scanning for `.symlink` files
+- Added broken symlink cleanup functionality
+- Added support for handling existing files/symlinks

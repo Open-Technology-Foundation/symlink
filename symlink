@@ -1,33 +1,14 @@
 #!/bin/bash
 #shellcheck disable=SC2034,SC1091,SC2155
-#
-# symlink - Tool to create symlinks in /usr/local/bin for executable files
-#
-# This utility creates symbolic links in /usr/local/bin for executable files,
-# making them accessible system-wide via the command line. It can process
-# individual files or scan for .symlink configuration files that list
-# multiple executables to be linked.
-#
-# Version:    1.3.5
-# Author:     System Administrator
-# License:    GPL-3.0 - GNU General Public License v3.0
-# Repository: https://github.com/user/symlink
-#
-# Features:
-# - Creates symlinks in /usr/local/bin for executable files
-# - Processes .symlink configuration files recursively
-# - Handles existing symlinks or files with optional prompting
-# - Supports dry-run mode for safe testing
-# - Provides detailed debug logging
-# - Requires root privileges (automatically uses sudo)
-# - Cleans up broken symlinks
-#
+# symlink v1.3.5 - Creates symlinks in /usr/local/bin for executables
+# Features: .symlink config files, dry-run, debug logging, auto-sudo,
+# broken link cleanup, and safety measures for system files
+# License: GPL-3.0
 set -euo pipefail
 
 # Enforce root privileges at the very beginning
 ((EUID)) && {
   sudo -ln &>/dev/null || { >&2 echo "$0: Requires root, or non-interactive sudo privileges."; exit 1; }
-
   sudo -En "$0" "$@"
   exit $?
 }
@@ -37,20 +18,17 @@ readonly PRG0=$(readlink -f -- "$0" 2>/dev/null || readlink -en -- "$0")
 readonly PRG=$(basename -- "$PRG0")
 readonly PRGDIR=$(dirname -- "$PRG0")
 readonly ORIG_DIR=$(pwd)
-readonly DEFAULT_TARGET_DIR="/usr/local/bin"
-readonly CRITICAL_FILES=("bash" "sh" "ls" "cp" "mv" "rm" "sudo" "chmod")
+readonly DEFAULT_TARGET_DIR=/usr/local/bin
+readonly CRITICAL_FILES=(bash sh ls cp mv rm sudo chmod chown)
 
 # Initialize key variables early
 declare -i DRY_RUN=0
-declare -i VERBOSE=1
+declare -i VERBOSE=0
 # Set PROMPT based on whether we're running interactively
 # If stdin is not a terminal, disable prompting by default
-declare -i PROMPT
-if [[ -t 0 ]]; then
-  PROMPT=1  # Interactive - prompting enabled by default
-else
-  PROMPT=0  # Non-interactive - no prompting by default
-fi
+declare -i PROMPT=0  # Non-interactive - no prompting by default
+[[ -t 0 ]] && PROMPT=1  # Interactive - prompting enabled by default
+
 declare -i SCANSYMLINK=0
 declare -i DELETE_DEAD_SYMLINKS=0
 declare -i LISTIT=0
@@ -62,29 +40,11 @@ declare -a ERROR_LINKS=()
 # Initialize debug flag
 declare -i DEBUG=0
 
-# Remove leading/trailing whitespace from a string
-# Used for processing entries in .symlink files
-#
-# Args:
-#   $1... - String to trim
-# Returns:
-#   Trimmed string (via stdout)
-trim() {
-  local v="$*"
-  v="${v#"${v%%[![:blank:]]*}"}"  # Remove leading whitespace
-  echo -n "${v%"${v##*[![:blank:]]}"}"  # Remove trailing whitespace
-}
-# Function to trim whitespace from strings
+declare -i FIND_MAX_DEPTH=5
 
-# Message functions 
-# These functions provide consistent output formatting for different message types
-# error   - Red text for critical errors (always shown)
-# warn    - Yellow text for warnings (always shown)
-# info    - Normal text for general information (only shown in verbose mode)
-# success - Green text for success messages (always shown)
-# debug   - Cyan text for debug information (only shown in debug mode)
+# Message functions for formatting output
 error() { printf '\e[31m%s: %s\e[0m\n' "$PRG" "$*" >&2; }
-warn() { printf '\e[33m%s: %s\e[0m\n' "$PRG" "$*" >&2; }
+warn() { if ((VERBOSE)); then printf '\e[33m%s: %s\e[0m\n' "$PRG" "$*" >&2; fi; }
 info() { if ((VERBOSE)); then printf '%s: %s\n' "$PRG" "$*" >&2; fi; }
 success() { printf '\e[32m%s: %s\e[0m\n' "$PRG" "$*" >&2; }
 debug() { if ((DEBUG)); then printf '\e[36m%s DEBUG: %s\e[0m\n' "$PRG" "$*" >&2; fi; }
@@ -93,50 +53,7 @@ debug() { if ((DEBUG)); then printf '\e[36m%s DEBUG: %s\e[0m\n' "$PRG" "$*" >&2;
 # First check environment variable
 [[ -n "${SYMLINK_DEBUG:-}" ]] && DEBUG=1
 
-# Then check command line flags, but only if we have arguments (prevents accessing undefined array)
-if (( $# > 0 )); then
-  for arg in "$@"; do
-    [[ "$arg" == "--debug" ]] && { DEBUG=1; break; }
-  done
-fi
-
-# Setup debug trace if in debug mode
-TRACEFILE=/dev/null
-if ((DEBUG)); then
-  TRACEFILE="/tmp/symlink-trace-$(whoami)-$$.log"
-  {
-    echo "TRACE: Script started at $(date)"
-    echo "TRACE: Arguments: $*"
-    echo "TRACE: Working dir: $(pwd)"
-    echo "TRACE: Running as: $(whoami), EUID: $EUID"
-  } > "$TRACEFILE"
-  debug "Debug mode enabled (logging to $TRACEFILE)"
-fi
-
-# Root privileges are now enforced at the beginning of the script
-# No additional checks needed here
-
-debug "Running as root user: EUID=$EUID"
-
-debug "Continuing with script execution"
-
-# Check if a file is a critical system file
-is_critical_file() {
-  local filename="$1"
-  for critical in "${CRITICAL_FILES[@]}"; do
-    [[ "$filename" == "$critical" ]] && return 0
-  done
-  return 1
-}
-
 # Display usage information and exit with success
-#
-# This function provides detailed help information about the script's usage,
-# options, and features. It is displayed when the -h/--help option is used
-# or when the script is run without arguments.
-#
-# Args: None
-# Returns: None (calls exit 0)
 usage() { cat <<EOT
 $PRG $VERSION - Create symlinks in /usr/local/bin for executable files
 
@@ -146,7 +63,9 @@ DESCRIPTION:
   This utility creates symbolic links in /usr/local/bin for executable files,
   making them accessible system-wide via the command line. It can process
   individual files or scan for .symlink configuration files that list
-  multiple executables to be linked.
+  multiple executables to be linked. The tool auto-detects interactive mode
+  and adjusts prompting behavior accordingly, with special handling for
+  critical system files.
 
 COMMON USAGE PATTERNS:
   • Link a specific script:
@@ -168,6 +87,7 @@ OPERATION MODES:
      $PRG -S [-P] [-d] [-v|-q] [-n] [startpath]
      Scans for .symlink files and creates links for files listed in them.
      If startpath is omitted, the current directory is used.
+     NOTE: Scanning is limited to max depth of $FIND_MAX_DEPTH for safety.
 
   3. List-only mode:
      $PRG -l [startpath]
@@ -177,6 +97,7 @@ FORMAT OF .SYMLINK FILES:
   Plain text files containing one executable filename per line.
   • Empty lines and lines starting with # are ignored
   • Each file path should be relative to the .symlink file's location
+  • File paths are trimmed of leading/trailing whitespace
   • Example:
       # This is a comment
       script1
@@ -184,17 +105,24 @@ FORMAT OF .SYMLINK FILES:
       bin/tool3
 
 OPTIONS:
-  -P, --no-prompt        Do not prompt before replacing existing files
+  -t, --target-dir       Define target dir (default $DEFAULT_TARGET_DIR)
   -S, --scan-symlink     Scan for .symlink files and process them
   -d, --delete-broken-symlinks
                          Clean up broken symlinks after creating new links
+  -P, --no-prompt        Do not prompt before replacing existing files
   -l, --list             List contents of all .symlink files only
   -n, --dry-run          Show what would happen without making changes
-  -v, --verbose          Show detailed output (default)
-  -q, --quiet            Suppress informational messages
+  -v, --verbose          Show detailed output
+  -q, --quiet            Suppress informational messages (default)
   -V, --version          Display version information
   -h, --help             Show this help message
-  --debug                Enable debug mode with detailed logging
+  -D, --debug            Enable debug mode with detailed logging
+
+SAFETY FEATURES:
+  • Critical system files (${CRITICAL_FILES[*]}) require explicit confirmation
+  • Scanning in $DEFAULT_TARGET_DIR is restricted for safety
+  • Path resolution operations have timeouts to prevent hanging
+  • All operations can be previewed with dry-run mode
 
 EXIT CODES:
   0: Success
@@ -204,48 +132,82 @@ EXIT CODES:
   22: Invalid option
   50: No symlink files found
 
+ENVIRONMENT VARIABLES:
+  SYMLINK_DEBUG          Set to any value to enable debug mode
+  SYMLINK_FORCE_CRITICAL Set to override safety checks for critical system files
+
 EXAMPLES:
-  $PRG -SPd /ai/scripts
-    Scans /ai/scripts recursively for .symlink files and processes them without prompts.
-  
+  $PRG -SPd /my/scripts
+    Scans /my/scripts recursively for .symlink files and processes them without prompts.
+
   $PRG -n ./my-script.sh
     Dry run to show what would happen when creating a symlink for my-script.sh.
 
   $PRG -l ~/bin
-    List all symlink configurations in the ~/bin directory without creating links.
+    List all .symlink configurations in the ~/bin directory without creating links.
 
   $PRG -Sd /opt/tools
     Process all .symlink files in /opt/tools without prompting for confirmation.
+
+  $PRG --debug -nSPd /path/to/scripts
+    Perform a dry run with detailed debug logging to a temporary file.
 
 EOT
   exit 0
 }
 
-# Create a symbolic link
-# Args:
-#   $1 - Source file path (must be an executable file)
-#   $2 - Target directory (typically /usr/local/bin)
-# Returns:
-#   0 - Success
-#   1 - General error
-#   2 - Permission denied
-#   3 - File not found
+# Remove leading/trailing whitespace from a string
+trim() {
+  local -- v="$*"
+  v="${v#"${v%%[![:blank:]]*}"}"  # Remove leading whitespace
+  echo -n "${v%"${v##*[![:blank:]]}"}"  # Remove trailing whitespace
+}
+
+# Check if a file is a critical system file
+is_critical_file() {
+  local -- filename="$1"
+  for critical in "${CRITICAL_FILES[@]}"; do
+    [[ "$filename" == "$critical" ]] && return 0
+  done
+  return 1
+}
+
+# Then check command line flags, but only if we have arguments (prevents accessing undefined array)
+if (($#)); then
+  for arg in "$@"; do [[ "$arg" == "--debug" ]] && { DEBUG=1; break; }; done
+fi
+
+# Setup debug trace if in debug mode
+TRACEFILE=/dev/null
+if ((DEBUG)); then
+  TRACEFILE=/tmp/symlink-trace-"$(whoami)"-"$$".log
+  {
+    echo "TRACE: Script started at $(date +Is)"
+    echo "TRACE: Arguments: $*"
+    echo "TRACE: Working dir: $(pwd)"
+    echo "TRACE: Running as: $(whoami), EUID: $EUID"
+  } > "$TRACEFILE"
+  debug "Debug mode enabled (logging to $TRACEFILE)"
+fi
+
+# Root privileges are now enforced at the beginning of the script
+# No additional checks needed here
+debug "Running as root user: EUID=$EUID"
+
+# Create a symbolic link (handles errors and critical system files)
 create_symlink() {
-  # This is a completely rewritten version of the create_symlink function that properly handles errors
-  # without using set +e/set -e to disable/enable errexit, which was masking issues.
-  
   debug "create_symlink: $1 → $2"
-  local source_path="$1"
-  local target_dir="$2"
-  local target_name
-  local target_path
-  local yn
-  local exit_code=0
-  
+  local -- source_path="$1"
+  local -- target_dir="$2"
+  local -- target_name
+  local -- target_path
+  local -- yn
+  local -i exit_code=0
+
   # Get target filename
   target_name=$(basename "$source_path")
   target_path="${target_dir}/${target_name}"
-  
+
   # Check if the source file exists and is executable
   if [[ ! -f "$source_path" ]]; then
     error "Source file does not exist: '$source_path'"
@@ -256,7 +218,7 @@ create_symlink() {
     fi
     return 3
   fi
-  
+
   if [[ ! -x "$source_path" ]]; then
     error "Source file is not executable: '$source_path'"
     ERROR_LINKS+=("$source_path → $target_path (not executable)")
@@ -266,9 +228,9 @@ create_symlink() {
     fi
     return 1
   fi
-  
+
   # Get absolute path to source with timeout to prevent hanging
-  local source_abs_path
+  local -- source_abs_path
   source_abs_path=$(timeout 2 readlink -f -- "$source_path" 2>/dev/null || timeout 2 readlink -en -- "$source_path")
 
   if [[ -z "$source_abs_path" ]]; then
@@ -276,7 +238,7 @@ create_symlink() {
     ERROR_LINKS+=("$source_path → $target_path (path resolution failed)")
     return 1
   fi
-  
+
   # Check if target directory exists and is writable
   if [[ ! -d "$target_dir" ]]; then
     error "Target directory does not exist: '$target_dir'"
@@ -287,7 +249,7 @@ create_symlink() {
     fi
     return 3
   fi
-  
+
   if [[ ! -w "$target_dir" ]]; then
     error "No write permission on target directory: '$target_dir'"
     ERROR_LINKS+=("$source_path → $target_path (permission denied)")
@@ -297,22 +259,22 @@ create_symlink() {
     fi
     return 2
   fi
-  
+
   # Check for critical system files
   if is_critical_file "$target_name"; then
     warn "WARNING: '$target_name' appears to be a critical system file!"
 
     # In non-interactive or dry-run mode, handle specially
-    if [[ $DRY_RUN -eq 1 ]]; then
+    if ((DRY_RUN)); then
       info "[DRY RUN] Would prompt user for confirmation before replacing critical file"
       SKIPPED_LINKS+=("$source_path → $target_path (critical file)")
       return 0
     fi
 
     # Always prompt for critical files, unless explicitly overridden with environment variable
-    if [[ $PROMPT -eq 1 ]] || [[ -z "${SYMLINK_FORCE_CRITICAL:-}" ]]; then
-      read -r -p "Are you ABSOLUTELY SURE you want to replace it? (yes/N) " yn
-      if [[ "${yn,,}" != "yes" ]]; then
+    if ((PROMPT)) || [[ -z "${SYMLINK_FORCE_CRITICAL:-}" ]]; then
+      read -r -p "Are you ABSOLUTELY SURE you want to replace it? (y/n) " yn
+      if [[ "${yn,,}" != "y" ]]; then
         info "Skipping '$target_name' (critical system file)"
         SKIPPED_LINKS+=("$source_path → $target_path (critical file)")
         return 0
@@ -331,12 +293,12 @@ create_symlink() {
       fi
     fi
   fi
-  
+
   # Dry run mode
   if ((DRY_RUN)); then
     if [[ -L "$target_path" ]]; then
       # Check if it's already pointing to our target
-      local current_target
+      local -- current_target
       current_target=$(readlink -f -- "$target_path" 2>/dev/null || readlink -en -- "$target_path")
       if [[ "$current_target" == "$source_abs_path" ]]; then
         info "[DRY RUN] Would skip (already linked): '$source_abs_path' → '$target_path'"
@@ -354,20 +316,20 @@ create_symlink() {
     fi
     return 0
   fi
-  
+
   # Handle existing symlink
   if [[ -L "$target_path" ]]; then
     info "Symlink exists: '$target_path'"
-    
+
     # Check if it's already pointing to our target
-    local current_target
+    local -- current_target
     current_target=$(readlink -f -- "$target_path" 2>/dev/null || readlink -en -- "$target_path")
     if [[ "$current_target" == "$source_abs_path" ]]; then
       info "Symlink already points to '$source_abs_path', skipping"
       SKIPPED_LINKS+=("$source_path → $target_path (already exists)")
       return 0
     fi
-    
+
     if ((PROMPT)); then
       read -r -p "Remove existing symlink? (y/N) " yn
       if [[ "${yn,,}" != "y" ]]; then
@@ -386,7 +348,7 @@ create_symlink() {
     fi
     REPLACED_LINKS+=("$source_path → $target_path (replaced symlink)")
   fi
-  
+
   # Handle existing regular file
   if [[ -e "$target_path" ]]; then
     info "File exists: '$target_path'"
@@ -408,7 +370,7 @@ create_symlink() {
     fi
     REPLACED_LINKS+=("$source_path → $target_path (replaced file)")
   fi
-  
+
   # Create the symbolic link
   info "Creating symlink: '$source_abs_path' → '$target_path'"
   if ! ln -s "$source_abs_path" "$target_path"; then
@@ -416,40 +378,30 @@ create_symlink() {
     ERROR_LINKS+=("$source_path → $target_path (link failed)")
     return 1
   fi
-  
+
   CREATED_LINKS+=("$source_path → $target_path")
   success "Created symlink: '$target_name'"
-  
+
   # Show details of the created symlink if verbose
   if ((VERBOSE)); then
     ls -lsd "$target_path" 2>/dev/null || true
   fi
-  
+
   return 0
 }
 
 # Find and delete broken symlinks in the target directory
-# This function searches for and removes any symbolic links that point to
-# non-existent targets in the specified directory.
-#
-# Args:
-#   $1 - Target directory to search for broken symlinks (typically /usr/local/bin)
-# Returns:
-#   0 - Always returns 0, even if errors occur
 delete_broken_symlinks() {
-  # This function is completely rewritten to focus on safety and reliability
-  
-  local target_dir="$1"
-  local count=0
-  local broken_links=()
-  
+  local -- target_dir="$1"
+  local -i count=0
+  local -a broken_links=()
+
   info "Finding broken symlinks in '$target_dir'"
-  
-  if [[ $DRY_RUN -eq 1 ]]; then
+
+  if ((DRY_RUN)); then
     debug "Checking for broken symlinks in dry-run mode (safe approach)"
 
-    # CRITICAL FIX: Use a pure bash approach to avoid potential find issues
-    # This directly reads the directory and checks each symlink individually
+    # Use pure bash approach for safety
     for link in "$target_dir"/*; do
       # Skip if it's not a symlink
       [[ -L "$link" ]] || continue
@@ -462,10 +414,10 @@ delete_broken_symlinks() {
       ((count++))
     done
 
-    [[ $count -gt 0 ]] && info "[DRY RUN] Would delete $count broken symlinks"
+    ((count)) && info "[DRY RUN] Would delete $count broken symlinks"
     return 0
   fi
-  
+
   # REAL MODE: Actually delete broken symlinks
   debug "Finding and deleting broken symlinks (safe approach)"
 
@@ -485,44 +437,36 @@ delete_broken_symlinks() {
       warn "Failed to delete broken symlink: '$link'"
     fi
   done
-  
-  [[ $count -gt 0 ]] && success "Deleted $count broken symlinks"
-  
+
+  ((count)) && success "Deleted $count broken symlinks"
+
   debug "delete_broken_symlinks completed successfully"
   return 0
 }
 
-# Print summary of operations
-# Displays a formatted summary of all operations performed by the script,
-# including counts of created, replaced, skipped and error links.
-# In verbose mode, also includes detailed information about each link.
-#
-# Args: None
-# Returns: None
+# Print summary of operations performed
 print_summary() {
   # Skip summary for dry run mode - we'll have a final message instead
   if ((DRY_RUN)); then
-    if [[ ${#CREATED_LINKS[@]} -eq 0 && ${#REPLACED_LINKS[@]} -eq 0 && 
-          ${#SKIPPED_LINKS[@]} -eq 0 && ${#ERROR_LINKS[@]} -eq 0 ]]; then
+    if (( ${#CREATED_LINKS[@]} == 0 && ${#REPLACED_LINKS[@]} ==0 &&
+          ${#SKIPPED_LINKS[@]} ==0 && ${#ERROR_LINKS[@]} == 0 )); then
       echo "No operations would be performed."
       return 0
     fi
     echo "<DRY RUN> SUMMARY"
   else
-    if [[ ${#CREATED_LINKS[@]} -eq 0 && ${#REPLACED_LINKS[@]} -eq 0 && 
-          ${#SKIPPED_LINKS[@]} -eq 0 && ${#ERROR_LINKS[@]} -eq 0 ]]; then
-      if ((VERBOSE)); then
-        echo "No operations performed."
-      fi
+    if (( ${#CREATED_LINKS[@]} == 0 && ${#REPLACED_LINKS[@]} == 0 &&
+          ${#SKIPPED_LINKS[@]} == 0 && ${#ERROR_LINKS[@]} == 0 )); then
+      ((VERBOSE)) && echo "No operations performed."
       return 0
     fi
     echo "SUMMARY"
   fi
-  
+
   # Calculate total processed
   local -i total=$((${#CREATED_LINKS[@]} + ${#REPLACED_LINKS[@]} + ${#SKIPPED_LINKS[@]} + ${#ERROR_LINKS[@]}))
   echo "Total processed: $total"
-  
+
   (( ${#CREATED_LINKS[@]} )) && {
     echo "Created symlinks: ${#CREATED_LINKS[@]}"
     if ((VERBOSE)); then
@@ -531,7 +475,7 @@ print_summary() {
       done
     fi
   }
-  
+
   (( ${#REPLACED_LINKS[@]} )) && {
     echo "Replaced symlinks: ${#REPLACED_LINKS[@]}"
     if ((VERBOSE)); then
@@ -540,7 +484,7 @@ print_summary() {
       done
     fi
   }
-  
+
   (( ${#SKIPPED_LINKS[@]} )) && {
     echo "Skipped symlinks: ${#SKIPPED_LINKS[@]}"
     if ((VERBOSE)); then
@@ -549,7 +493,7 @@ print_summary() {
       done
     fi
   }
-  
+
   # Always show errors regardless of verbosity
   (( ${#ERROR_LINKS[@]} )) && {
     echo "Errors: ${#ERROR_LINKS[@]}"
@@ -557,65 +501,48 @@ print_summary() {
       echo "  $link"
     done
   }
-  
+
 }
 
-# Main function - Entry point and controller for the symlink utility
-#
-# This is the primary entry point for the script that:
-# 1. Parses command-line arguments and validates options
-# 2. Determines which operation mode to use:
-#    - Direct linking of specified executable files
-#    - Scanning for .symlink files and processing them
-#    - Listing contents of .symlink files without creating links
-# 3. Coordinates execution of appropriate functions based on the requested operation
-# 4. Handles error conditions and provides status reporting
-# 5. Performs cleanup operations
-# 6. Returns appropriate exit codes
-#
-# Args:
-#   $@ - Command line arguments passed to the script
-# Returns:
-#   Exit code based on operation results:
-#   0 - Success
-#   1 - General error
-#   2 - Permission denied
-#   3 - File not found
-#   22 - Invalid option
-#   50 - No symlink files found
+# Main function - Entry point for the symlink utility
 main() {
   local -a targets=()          # Array of script paths to symlink
-  local target_dir="$DEFAULT_TARGET_DIR"
-  local scriptpath scriptprg target='' yn
+  local -- target_dir=''
+  local -- scriptpath scriptprg target='' yn
   local -i exit_code=0
-  
+
   # Show usage if no arguments provided
   (($#)) || usage
-  
+
   # Parse command line options
   while (($#)); do case "$1" in
     # Basic options
-    -h|--help) usage ;;
-    -v|--verbose) VERBOSE=1 ;;
-    -q|--quiet) VERBOSE=0 ;;
-    -V|--version) echo "$PRG $VERSION"; exit 0 ;;
-    -n|--dry-run) DRY_RUN=1 ;;
-    -D|--debug) DEBUG=1 ;;  # Debug option handled earlier but we include again to avoid error
+    -h|--help)          usage ;;
+    -v|--verbose)       VERBOSE=1 ;;
+    -q|--quiet)         VERBOSE=0 ;;
+    -V|--version)       echo "$PRG $VERSION"; exit 0 ;;
+    -n|--dry-run)       DRY_RUN=1 ;;
+    -D|--debug)         DEBUG=1 ;;
     # Feature options
+    -t|--target-dir)    shift; target_dir="${1:-}" ;;
     -l|--list)          LISTIT=1 ;;
     -P|--no-prompt)     PROMPT=0 ;;
     -S|--scan-symlink)  SCANSYMLINK=1 ;;
-    -d|--delete-broken-symlinks) 
+    -d|--delete-broken-symlinks)
                         DELETE_DEAD_SYMLINKS=1 ;;
-     #shellcheck disable=SC2046 # Handle combined short options (e.g., -vPd)
-     -[hvqVnDlPSd]*)    set -- '' $(printf -- "-%c " $(grep -o . <<<"${1:1}")) "${@:2}"
+     # Handle combined short options (e.g., -vPd)
+     -[hvqVnDtlPSd]*)
+                        #shellcheck disable=SC2046
+                        set -- '' $(printf -- "-%c " $(grep -o . <<<"${1:1}")) "${@:2}"
                         ;;
     # Error handling
     -*)                 error "Invalid option '$1'"; exit 22 ;;
     # Collect non-option arguments as target files/paths
     *)                  targets+=("$1") ;;
   esac; shift; done
-  
+
+  [[ -z $target_dir ]] && target_dir="$DEFAULT_TARGET_DIR"
+
   # Only check target dir if not in dry-run mode
   if ((DRY_RUN == 0)); then
     # Check if target directory exists and is writable
@@ -623,24 +550,24 @@ main() {
       error "Target directory does not exist: '$target_dir'"
       exit 3
     fi
-    
+
     if [[ ! -w "$target_dir" ]]; then
       error "No write permission on target directory: '$target_dir'"
       exit 2
     fi
   fi
-  
+
   # Process .symlink files if -l or -S options were used
   if ((LISTIT + SCANSYMLINK)); then
     # Allow only one startpath for listing or scanning operations
-    ((${#targets[@]} > 1)) && { 
+    ((${#targets[@]} > 1)) && {
       error "Can only specify one startpath for $( ((LISTIT)) && echo "listing" || echo "scanning" )."
       exit 1
     }
-    
-    local startpath="$ORIG_DIR"
-    local symlink
-    
+
+    local -- startpath="$ORIG_DIR"
+    local -- symlink
+
     # Use the provided path if available, otherwise use current directory
     if ((${#targets[@]})); then
       # Handle relative paths correctly
@@ -651,7 +578,7 @@ main() {
       fi
       targets=()
     fi
-    
+
     # Validate the startpath - use more robust path resolution
     info "Resolving path: '$startpath'"
 
@@ -665,13 +592,13 @@ main() {
       error "Failed to resolve path: empty result"
       exit 1
     fi
-    
+
     info "Resolved path: '$startpath'"
     if [[ ! -d "$startpath" ]]; then
       error "Path is not a directory: '$startpath'"
       exit 3
     fi
-    
+
     # Ensure the path exists and is accessible
     if ! [[ -x "$startpath" ]]; then
       error "Path exists but is not accessible: '$startpath'"
@@ -682,11 +609,10 @@ main() {
     if ((LISTIT)); then
       info "Listing contents of all .symlink files"
       info "  starting in '$startpath'"
-      
-      local symlink_files=()
-      # COMPLETE REWRITE: Similar to the scan mode fix, but for listing
-      debug "Using safer approach to find .symlink files"
-      
+
+      local -a symlink_files=()
+      debug "Finding .symlink files"
+
       # First check if the startpath is actually /usr/local/bin or contains it
       if [[ "$startpath" == "$DEFAULT_TARGET_DIR" || "$startpath" == "$DEFAULT_TARGET_DIR"/* ]]; then
         # We're scanning in or below the target directory, which is dangerous
@@ -700,50 +626,43 @@ main() {
         fi
       else
         # For standard directories, do a limited depth search
-        debug "Using safer find command limited to max depth 2 for listing"
-        # Use a deliberately limited find command: never follow symlinks, very limited depth
-        if ! mapfile -t symlink_files < <(find "$startpath" -maxdepth 2 -type f -name '.symlink' 2>/dev/null); then
+          if ! mapfile -t symlink_files < <(
+              find "$startpath" -maxdepth "$FIND_MAX_DEPTH" \
+                  -type f -name '.symlink' 2>/dev/null
+              ); then
           error "Error finding .symlink files for listing"
           exit 1
         fi
 
-        if [[ ${#symlink_files[@]} -eq 0 ]]; then
+        if (( ${#symlink_files[@]} == 0 )); then
           warn "No .symlink files found in '$startpath'"
           exit 50
         fi
       fi
-      
+
       debug "Found ${#symlink_files[@]} .symlink files for listing"
 
       for symlink in "${symlink_files[@]}"; do
-        local symlink_dir=$(dirname -- "$symlink")
+        local -- symlink_dir=$(dirname -- "$symlink")
         echo "$(basename -- "$symlink_dir")/.symlink (${symlink_dir}):"
         grep -v '^$\|^#' "$symlink" | sed 's/^/    /'
         echo
       done
       exit 0
     fi
-    
+
     # Handle the -S (scan) option - process .symlink files
     info "Scanning for all .symlink files starting in '$startpath'"
     local -a symlinks=()
-    
-    # COMPLETE REWRITE OF THIS SECTION
-    # Issue: The fundamental problem is not just with the find command, but with the overall scanning approach
-    
-    # Safety first: Use a strictly controlled find approach that will never cause recursion issues
+
+    # Safety first: Use controlled approach to avoid recursion issues
     startpath="${startpath%/}"  # Remove trailing slash if present
     debug "Start path for symlink scan: '$startpath'"
 
-    # First, verify we have direct access to files in this directory (no recursion)
     if [[ ! -d "$startpath" ]] || [[ ! -r "$startpath" ]]; then
       error "Cannot access directory: '$startpath'"
       exit 3
     fi
-    
-    # CRITICAL: Instead of using 'find', start with a safer approach that avoids recursion
-    # Find only .symlink files directly in the specified directory
-    debug "Using direct directory check instead of recursive find"
 
     # First check if the startpath is actually /usr/local/bin or contains it
     if [[ "$startpath" == "$DEFAULT_TARGET_DIR" || "$startpath" == "$DEFAULT_TARGET_DIR"/* ]]; then
@@ -758,14 +677,15 @@ main() {
       fi
     else
       # For standard directories, do a limited depth search
-      debug "Using safer find command limited to max depth 2"
-      # Use a deliberately limited find command: never follow symlinks, very limited depth
-      if ! mapfile -t symlinks < <(find "$startpath" -maxdepth 2 -type f -name '.symlink' 2>/dev/null); then
+      if ! mapfile -t symlinks < <(
+          find "$startpath" -maxdepth "$FIND_MAX_DEPTH" \
+              -type f -name '.symlink' 2>/dev/null
+          ); then
         error "Error finding .symlink files"
         exit 1
       fi
 
-      if [[ ${#symlinks[@]} -eq 0 ]]; then
+      if (( ${#symlinks[@]} == 0 )); then
         warn "No .symlink files found in '$startpath'"
         exit 50
       fi
@@ -774,54 +694,52 @@ main() {
     debug "Found ${#symlinks[@]} .symlink files to process"
 
     info "Found ${#symlinks[@]} .symlink files"
-    
-    # Process each .symlink file - using batches for better performance
-    # Ensure we have actual files to process
+
+    # Process each .symlink file in batches
     if (( ${#symlinks[@]} == 0 )); then
       warn "No .symlink files to process"
       exit 50
     fi
 
-    # Use smaller batches to ensure progress is displayed and script doesn't stall
-    local batch_size=5
+    local -i batch_size=5
     local -i processed=0
     local -i total=${#symlinks[@]}
     local -i batch_count=$(( (total + batch_size - 1) / batch_size ))
-    
+
     info "Found and will process ${#symlinks[@]} .symlink files"
     debug "Processing in $batch_count batches"
-    
+
     # Process in batches
     for ((batch=0; batch<batch_count; batch++)); do
-      local start=$((batch * batch_size))
-      local end=$(( (batch + 1) * batch_size ))
-      [[ $end -gt $total ]] && end=$total
-      
+      local -i start=$((batch * batch_size))
+      local -i end=$(( (batch + 1) * batch_size ))
+      (( end > total )) && end=$total
+
       info "Processing batch $((batch+1))/$batch_count"
       debug "Processing files $((start+1))-$end of $total"
-      
+
       # Process each file in this batch
       for ((i=start; i<end; i++)); do
-        local symlink="${symlinks[$i]}"
+        local -- symlink="${symlinks[$i]}"
         info "Processing: $symlink ($((i+1))/$total)"
-        
+
         # Get the directory containing the .symlink file
-        local symlink_dir=$(dirname -- "$symlink")
-        local count=0
-        
+        local -- symlink_dir=$(dirname -- "$symlink")
+        local -i count=0
+
         # Read the .symlink file
         while IFS= read -r line || [[ -n "$line" ]]; do
           # Skip empty lines and comments
           [[ -z "$line" || "${line:0:1}" == "#" ]] && continue
-          
+
           # Trim leading/trailing whitespace using our trim function
           line=$(trim "$line")
           [[ -z "$line" ]] && continue
-          
+
           # Get the full path to the script
-          local script_path="$symlink_dir/$line"
+          local -- script_path="$symlink_dir/$line"
           count=$((count+1))
-          
+
           if ((DRY_RUN)); then
             # For dry run, just check if it exists
             if [[ ! -f "$script_path" ]]; then
@@ -829,13 +747,13 @@ main() {
               ERROR_LINKS+=("$script_path → $target_dir/$(basename "$script_path") (not found)")
               continue
             fi
-            
+
             if [[ ! -x "$script_path" ]]; then
               error "Source file not executable: '$script_path'"
               ERROR_LINKS+=("$script_path → $target_dir/$(basename "$script_path") (not executable)")
               continue
             fi
-            
+
             info "[DRY RUN] Would create symlink: $script_path → $target_dir/$(basename "$script_path")"
             CREATED_LINKS+=("$script_path → $target_dir/$(basename "$script_path")")
           else
@@ -845,13 +763,13 @@ main() {
               ERROR_LINKS+=("$script_path → $target_dir/$(basename "$script_path") (not found)")
               continue
             fi
-            
+
             if [[ ! -x "$script_path" ]]; then
               error "Source file not executable: '$script_path'"
               ERROR_LINKS+=("$script_path → $target_dir/$(basename "$script_path") (not executable)")
               continue
             fi
-            
+
             if ln -sf "$(readlink -f "$script_path")" "$target_dir/$(basename "$script_path")"; then
               info "Created symlink: $script_path → $target_dir/$(basename "$script_path")"
               CREATED_LINKS+=("$script_path → $target_dir/$(basename "$script_path")")
@@ -861,25 +779,25 @@ main() {
             fi
           fi
         done < "$symlink"
-        
+
         debug "Processed $count entries from $symlink"
         processed=$((processed+1))
       done
-      
+
       debug "Completed batch $((batch+1))/$batch_count"
     done
-    
+
     info "Processed all $processed .symlink files"
-    
+
   else
     # Process individual target files
     if (( ${#targets[@]} == 0)); then
       error "No target files specified. Use $PRG --help for usage information."
       exit 1
     fi
-    
+
     info "Processing ${#targets[@]} individual target files"
-    
+
     # Process each target file
     local -i processed=0
     for target in "${targets[@]}"; do
@@ -889,21 +807,19 @@ main() {
       ((processed++))
     done
   fi
-  
+
   # Optionally clean up broken symlinks
-  if ((DELETE_DEAD_SYMLINKS)); then
-    delete_broken_symlinks "$target_dir"
-  fi
-  
+  ((DELETE_DEAD_SYMLINKS)) && delete_broken_symlinks "$target_dir"
+
   # Print summary of operations
   print_summary
-  
+
   # Return appropriate exit code
   if (( ${#ERROR_LINKS[@]} )); then
     exit_code=1
     warn "There were errors during processing. Please check the error log."
-  elif [[ ${#CREATED_LINKS[@]} -eq 0 && ${#REPLACED_LINKS[@]} -eq 0 ]]; then
-    if [[ ${#SKIPPED_LINKS[@]} -gt 0 ]]; then
+  elif (( ${#CREATED_LINKS[@]} == 0 && ${#REPLACED_LINKS[@]} == 0 )); then
+    if (( ${#SKIPPED_LINKS[@]} )); then
       warn "No symlinks created. All operations were skipped."
     else
       warn "No symlinks processed. Make sure your paths are correct."
@@ -911,17 +827,12 @@ main() {
   else
     success "Operation completed successfully."
   fi
-  
-  # Perform final cleanup and exit preparation
-  debug "In final cleanup section"
-  
-  # Return to original directory
-  cd "$ORIG_DIR" 2>/dev/null || true
 
-  # Restore cursor visibility (in case it was hidden by a previous operation)
+  # Cleanup and finalization
+  cd "$ORIG_DIR" 2>/dev/null || true
   printf '\e[?25h'
 
-  # Add final status report to debug log if debug mode is enabled
+  # Add debug log
   if ((DEBUG)); then
     {
       echo "TRACE: Created links: ${#CREATED_LINKS[@]}"
@@ -933,23 +844,13 @@ main() {
       echo "TRACE: =============== END OF EXECUTION ==============="
     } >> "$TRACEFILE"
 
-    # Log the location of the trace file for the user
     debug "Debug log written to $TRACEFILE"
   fi
-  
-  # Print dry run completion message
-  if ((DRY_RUN)); then
-    echo "Dry run completed. No changes were made."
-  fi
-  
-  # Log exit code for debugging
+
+  ((DRY_RUN)) && echo "Dry run completed. No changes were made."
   debug "Exiting with code: $exit_code"
   exit $exit_code
 }
 
 main "$@"
 #fin
-
-
-    -[hvqV]*) #shellcheck disable=SC2046 #split up single options
-                  set -- '' $(printf -- "-%c " $(grep -o . <<<"${1:1}")) "${@:2}";;

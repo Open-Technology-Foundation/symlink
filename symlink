@@ -8,7 +8,7 @@ set -euo pipefail
 
 # Enforce root privileges at the very beginning
 ((EUID)) && {
-  sudo -ln &>/dev/null || { >&2 echo "$0: Requires root, or non-interactive sudo privileges."; exit 1; }
+  sudo -ln &>/dev/null || { >&2 echo "$(basename "$0"): Requires root, or non-interactive sudo privileges."; exit 1; }
   sudo -En "$0" "$@"
   exit $?
 }
@@ -19,11 +19,10 @@ readonly PRG=$(basename -- "$PRG0")
 readonly PRGDIR=$(dirname -- "$PRG0")
 readonly ORIG_DIR=$(pwd)
 readonly DEFAULT_TARGET_DIR=/usr/local/bin
-readonly CRITICAL_FILES=(bash sh ls cp mv rm sudo chmod chown)
-
+#readonly CRITICAL_FILES=(bash sh ls cp mv rm sudo chmod chown)
+readonly CRITICAL_FILES=(awk bash cat chgrp chmod chown clang cp dash date df du echo file find gcc git grep groupadd groupdel head hostname ifconfig ip kill less login ls make mkdir mount mv netstat passwd ping ps reboot rm rmdir sed sh shutdown ss sudo tail top touch umount useradd userdel vi vim zsh )
 # Initialize key variables early
-declare -i DRY_RUN=0
-declare -i VERBOSE=0
+declare -i DRY_RUN=0 VERBOSE=0 DEBUG=0
 # Set PROMPT based on whether we're running interactively
 # If stdin is not a terminal, disable prompting by default
 declare -i PROMPT=0  # Non-interactive - no prompting by default
@@ -32,29 +31,45 @@ declare -i PROMPT=0  # Non-interactive - no prompting by default
 declare -i SCANSYMLINK=0
 declare -i DELETE_DEAD_SYMLINKS=0
 declare -i LISTIT=0
+declare -i FIND_MAX_DEPTH=5
 declare -a CREATED_LINKS=()
 declare -a REPLACED_LINKS=()
 declare -a SKIPPED_LINKS=()
 declare -a ERROR_LINKS=()
 
-# Initialize debug flag
-declare -i DEBUG=0
-
-declare -i FIND_MAX_DEPTH=5
-
 # Message functions for formatting output
-error() { printf '\e[31m%s: %s\e[0m\n' "$PRG" "$*" >&2; }
-warn() { if ((VERBOSE)); then printf '\e[33m%s: %s\e[0m\n' "$PRG" "$*" >&2; fi; }
+declare -- RED='' YELLOW='' GREEN='' CYAN='' NOCOLOR=''
+[[ -t 0 ]] && { RED='\e[31m' YELLOW='\e[33m' GREEN='\e[32m' CYAN='\e[36m' NOCOLOR='\e[0m'; }
+error() { printf '%s%s: %s%s\n' "$RED" "$PRG" "$*" "$NOCOLOR" >&2; }
+warn() { if ((VERBOSE)); then printf '%s%s: %s%s\n' "$YELLOW" "$PRG" "$*" "$NOCOLOR" >&2; fi; }
 info() { if ((VERBOSE)); then printf '%s: %s\n' "$PRG" "$*" >&2; fi; }
-success() { printf '\e[32m%s: %s\e[0m\n' "$PRG" "$*" >&2; }
-debug() { if ((DEBUG)); then printf '\e[36m%s DEBUG: %s\e[0m\n' "$PRG" "$*" >&2; fi; }
+success() { printf '%s%s: %s%s\n' "$GREEN" "$PRG" "$*" "$NOCOLOR" >&2; }
+debug() { if ((DEBUG)); then printf '%s%s DEBUG: %s%s\n' "$CYAN" "$PRG" "$*" "$NOCOLOR" >&2; fi; }
 
+# Pre-Check DEBUG flag -----------------
 # Enable debug mode if requested through environment variable or command line flag
-# First check environment variable
 [[ -n "${SYMLINK_DEBUG:-}" ]] && DEBUG=1
+if (($#)); then
+  for arg in "$@"; do [[ "$arg" == "--debug" ]] && { DEBUG=1; break; }; done
+fi
+# Setup debug trace if in debug mode
+declare -- TRACEFILE=/dev/null
+if ((DEBUG)); then
+  TRACEFILE=/tmp/symlink-trace-"$(whoami)"-"$$".log
+  { echo "TRACE: Script started at $(date +Is)"
+    echo "TRACE: Arguments: $*"
+    echo "TRACE: Working dir: $(pwd)"
+    echo "TRACE: Running as: $(whoami), EUID: $EUID"
+  } > "$TRACEFILE"
+  debug "Debug mode enabled (logging to $TRACEFILE)"
+fi
+# Root privileges are now enforced at the beginning of the script
+debug "Running as root user: EUID=$EUID"
 
 # Display usage information and exit with success
-usage() { cat <<EOT
+usage() {
+  local exit_code="${1:-0}"
+  cat <<EOT
 $PRG $VERSION - Create symlinks in /usr/local/bin for executable files
 
 Requires root privileges (automatically uses sudo if needed).
@@ -153,7 +168,7 @@ EXAMPLES:
     Perform a dry run with detailed debug logging to a temporary file.
 
 EOT
-  exit 0
+  exit "$exit_code"
 }
 
 # Remove leading/trailing whitespace from a string
@@ -171,28 +186,6 @@ is_critical_file() {
   done
   return 1
 }
-
-# Then check command line flags, but only if we have arguments (prevents accessing undefined array)
-if (($#)); then
-  for arg in "$@"; do [[ "$arg" == "--debug" ]] && { DEBUG=1; break; }; done
-fi
-
-# Setup debug trace if in debug mode
-TRACEFILE=/dev/null
-if ((DEBUG)); then
-  TRACEFILE=/tmp/symlink-trace-"$(whoami)"-"$$".log
-  {
-    echo "TRACE: Script started at $(date +Is)"
-    echo "TRACE: Arguments: $*"
-    echo "TRACE: Working dir: $(pwd)"
-    echo "TRACE: Running as: $(whoami), EUID: $EUID"
-  } > "$TRACEFILE"
-  debug "Debug mode enabled (logging to $TRACEFILE)"
-fi
-
-# Root privileges are now enforced at the beginning of the script
-# No additional checks needed here
-debug "Running as root user: EUID=$EUID"
 
 # Create a symbolic link (handles errors and critical system files)
 create_symlink() {
@@ -386,14 +379,12 @@ create_symlink() {
   local -- owner=$(stat -c '%U' "$source_abs_path")
   local -- group=$(stat -c '%G' "$source_abs_path")
   # Change ownership of the symlink to match the target
-  chown -h "$owner:$group" "$target_path"
+  chown -h "$owner":"$group" "$target_path"
   # Update the timestamp of the symlink to match the target
   touch -h -r "$source_abs_path" "$target_path"
 
   # Show details of the created symlink if verbose
-  if ((VERBOSE)); then
-    ls -lsd "$target_path" 2>/dev/null || true
-  fi
+  ((VERBOSE)) && { ls -lsd "$target_path" 2>/dev/null || true; }
 
   return 0
 }
@@ -477,29 +468,29 @@ print_summary() {
 
   (( ${#CREATED_LINKS[@]} )) && {
     echo "Created symlinks: ${#CREATED_LINKS[@]}"
-    if ((VERBOSE)); then
+    ((VERBOSE)) && {
       for link in "${CREATED_LINKS[@]}"; do
         echo "  $link"
       done
-    fi
+    }
   }
 
   (( ${#REPLACED_LINKS[@]} )) && {
     echo "Replaced symlinks: ${#REPLACED_LINKS[@]}"
-    if ((VERBOSE)); then
+    ((VERBOSE)) && {
       for link in "${REPLACED_LINKS[@]}"; do
         echo "  $link"
       done
-    fi
+    }
   }
 
   (( ${#SKIPPED_LINKS[@]} )) && {
     echo "Skipped symlinks: ${#SKIPPED_LINKS[@]}"
-    if ((VERBOSE)); then
+    ((VERBOSE)) && {
       for link in "${SKIPPED_LINKS[@]}"; do
         echo "  $link"
       done
-    fi
+    }
   }
 
   # Always show errors regardless of verbosity
@@ -512,25 +503,18 @@ print_summary() {
 
 }
 
-# Main function - Entry point for the symlink utility
+# Main ===========================================================================
 main() {
-  local -a targets=()          # Array of script paths to symlink
+  local -a targets=() # array of script paths to symlink
   local -- target_dir=''
   local -- scriptpath scriptprg target='' yn
   local -i exit_code=0
 
   # Show usage if no arguments provided
-  (($#)) || usage
+  (($#)) || >&2 usage 1
 
   # Parse command line options
   while (($#)); do case "$1" in
-    # Basic options
-    -h|--help)          usage ;;
-    -v|--verbose)       VERBOSE=1 ;;
-    -q|--quiet)         VERBOSE=0 ;;
-    -V|--version)       echo "$PRG $VERSION"; exit 0 ;;
-    -n|--dry-run)       DRY_RUN=1 ;;
-    -D|--debug)         DEBUG=1 ;;
     # Feature options
     -t|--target-dir)    shift; target_dir="${1:-}" ;;
     -l|--list)          LISTIT=1 ;;
@@ -538,9 +522,15 @@ main() {
     -S|--scan-symlink)  SCANSYMLINK=1 ;;
     -d|--delete-broken-symlinks)
                         DELETE_DEAD_SYMLINKS=1 ;;
+    # Basic options
+    -h|--help)          usage 0 ;;
+    -v|--verbose)       VERBOSE=1 ;;
+    -q|--quiet)         VERBOSE=0 ;;
+    -V|--version)       echo "$PRG $VERSION"; exit 0 ;;
+    -n|--dry-run)       DRY_RUN=1 ;;
+    -D|--debug)         DEBUG=1 ;;
      # Handle combined short options (e.g., -vPd)
-     -[hvqVnDtlPSd]*)
-                        #shellcheck disable=SC2046
+     -[tlPSdhvqVnD]*)   #shellcheck disable=SC2046
                         set -- '' $(printf -- "-%c " $(grep -o . <<<"${1:1}")) "${@:2}"
                         ;;
     # Error handling
@@ -859,6 +849,7 @@ main() {
   debug "Exiting with code: $exit_code"
   exit $exit_code
 }
+
 
 main "$@"
 #fin

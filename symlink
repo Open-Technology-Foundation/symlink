@@ -14,7 +14,7 @@ set -euo pipefail
 }
 
 readonly VERSION='1.3.5'
-readonly PRG0=$(readlink -f -- "$0" 2>/dev/null || readlink -en -- "$0")
+readonly PRG0=$(readlink -fn -- "$0" 2>/dev/null || readlink -en -- "$0")
 readonly PRG=$(basename -- "$PRG0")
 readonly PRGDIR=$(dirname -- "$PRG0")
 readonly ORIG_DIR=$(pwd)
@@ -231,7 +231,7 @@ create_symlink() {
 
   # Get absolute path to source with timeout to prevent hanging
   local -- source_abs_path
-  source_abs_path=$(timeout 2 readlink -f -- "$source_path" 2>/dev/null || timeout 2 readlink -en -- "$source_path")
+  source_abs_path=$(timeout 2 readlink -en -- "$source_path" 2>/dev/null || timeout 2 readlink -fn -- "$source_path")
 
   if [[ -z "$source_abs_path" ]]; then
     error "Failed to resolve source path: '$source_path'"
@@ -382,6 +382,14 @@ create_symlink() {
   CREATED_LINKS+=("$source_path → $target_path")
   success "Created symlink: '$target_name'"
 
+  # Get owner and group of the target file
+  local -- owner=$(stat -c '%U' "$source_abs_path")
+  local -- group=$(stat -c '%G' "$source_abs_path")
+  # Change ownership of the symlink to match the target
+  chown -h "$owner:$group" "$target_path"
+  # Update the timestamp of the symlink to match the target
+  touch -h -r "$source_abs_path" "$target_path"
+
   # Show details of the created symlink if verbose
   if ((VERBOSE)); then
     ls -lsd "$target_path" 2>/dev/null || true
@@ -464,7 +472,7 @@ print_summary() {
   fi
 
   # Calculate total processed
-  local -i total=$((${#CREATED_LINKS[@]} + ${#REPLACED_LINKS[@]} + ${#SKIPPED_LINKS[@]} + ${#ERROR_LINKS[@]}))
+  local -i total=$(( ${#CREATED_LINKS[@]} + ${#REPLACED_LINKS[@]} + ${#SKIPPED_LINKS[@]} + ${#ERROR_LINKS[@]} ))
   echo "Total processed: $total"
 
   (( ${#CREATED_LINKS[@]} )) && {

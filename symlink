@@ -8,7 +8,7 @@ set -euo pipefail
 # Enforce root privileges at the very beginning
 ((EUID)) && {
   sudo -ln &>/dev/null || { >&2 echo "$(basename "$0"): Requires root, or non-interactive sudo privileges."; exit 1; }
-  sudo -En "$0" "$@"
+  sudo -E "$0" "$@"
   exit $?
 }
 
@@ -38,12 +38,12 @@ declare -a ERROR_LINKS=()
 
 # Message functions for formatting output
 declare -- RED='' YELLOW='' GREEN='' CYAN='' NOCOLOR=''
-[[ -t 0 ]] && { RED='\e[31m' YELLOW='\e[33m' GREEN='\e[32m' CYAN='\e[36m' NOCOLOR='\e[0m'; }
-error() { printf '%s%s: %s%s\n' "$RED" "$PRG" "$*" "$NOCOLOR" >&2; }
-warn() { if ((VERBOSE)); then printf '%s%s: %s%s\n' "$YELLOW" "$PRG" "$*" "$NOCOLOR" >&2; fi; }
-info() { if ((VERBOSE)); then printf '%s: %s\n' "$PRG" "$*" >&2; fi; }
-success() { printf '%s%s: %s%s\n' "$GREEN" "$PRG" "$*" "$NOCOLOR" >&2; }
-debug() { if ((DEBUG)); then printf '%s%s DEBUG: %s%s\n' "$CYAN" "$PRG" "$*" "$NOCOLOR" >&2; fi; }
+[ -t 2 ] && { RED=$'\e[31m' YELLOW=$'\e[33m' GREEN=$'\e[32m' CYAN=$'\e[36m' NOCOLOR=$'\e[0m'; }
+error()   { printf '%s%s: %s%s\n' "$RED" "$PRG" "$*" "$NOCOLOR" >&2; }
+warn()    { if ((VERBOSE)); then printf '%s%s: %s%s\n' "$YELLOW" "$PRG" "$*" "$NOCOLOR" >&2; fi; }
+info()    { if ((VERBOSE)); then printf '%s: %s\n' "$PRG" "$*" >&2; fi; }
+success() { if ((VERBOSE)); then printf '%s%s: %s%s\n' "$GREEN" "$PRG" "$*" "$NOCOLOR" >&2; fi; }
+debug()   { if ((DEBUG));   then printf '%s%s DEBUG: %s%s\n' "$CYAN" "$PRG" "$*" "$NOCOLOR" >&2; fi; }
 
 # Pre-Check DEBUG flag -----------------
 # Enable debug mode if requested through environment variable or command line flag
@@ -500,6 +500,7 @@ print_summary() {
     done
   }
 
+  return 0
 }
 
 # Main ===========================================================================
@@ -625,7 +626,8 @@ main() {
         # For standard directories, do a limited depth search
           if ! mapfile -t symlink_files < <(
               find "$startpath" -maxdepth "$FIND_MAX_DEPTH" \
-                  -type f -name '.symlink' 2>/dev/null
+                  -type f -name '.symlink' 2>/dev/null \
+                | sort -u
               ); then
           error "Error finding .symlink files for listing"
           exit 1
@@ -676,7 +678,8 @@ main() {
       # For standard directories, do a limited depth search
       if ! mapfile -t symlinks < <(
           find "$startpath" -maxdepth "$FIND_MAX_DEPTH" \
-              -type f -name '.symlink' 2>/dev/null
+              -type f -name '.symlink' 2>/dev/null \
+            | sort -u
           ); then
         error "Error finding .symlink files"
         exit 1

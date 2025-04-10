@@ -1,11 +1,10 @@
 #!/bin/bash
 #shellcheck disable=SC2034,SC1091,SC2155
-# symlink v1.3.5 - Creates symlinks in /usr/local/bin for executables
+# symlink v1.3.7 - Creates symlinks in /usr/local/bin for executables
 # Features: .symlink config files, dry-run, debug logging, auto-sudo,
 # broken link cleanup, and safety measures for system files
 # License: GPL-3.0
 set -euo pipefail
-
 # Enforce root privileges at the very beginning
 ((EUID)) && {
   sudo -ln &>/dev/null || { >&2 echo "$(basename "$0"): Requires root, or non-interactive sudo privileges."; exit 1; }
@@ -13,7 +12,7 @@ set -euo pipefail
   exit $?
 }
 
-readonly VERSION='1.3.5'
+readonly VERSION='1.3.7'
 readonly PRG0=$(readlink -fn -- "$0" 2>/dev/null || readlink -en -- "$0")
 readonly PRG=$(basename -- "$PRG0")
 readonly PRGDIR=$(dirname -- "$PRG0")

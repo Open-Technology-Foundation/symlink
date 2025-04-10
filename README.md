@@ -1,6 +1,6 @@
 # Symlink Utility
 
-![Version](https://img.shields.io/badge/Version-1.3.5-blue.svg)
+![Version](https://img.shields.io/badge/Version-1.3.7-blue.svg)
 ![License](https://img.shields.io/badge/License-GPL--3.0-green.svg)
 
 A Bash utility that creates symbolic links in `/usr/local/bin` for executables, making them accessible system-wide. Designed for system administrators managing scripts across multiple directories, with built-in safety features and batch processing capabilities.
@@ -184,7 +184,7 @@ Contributions welcome via Pull Requests.
 
 ## Changelog
 
-### Version 1.3.5
+### Version 1.3.7
 - Fixed hanging issues in broken symlink cleanup and path resolution
 - Improved non-interactive mode detection with `[[ -t 0 ]]` terminal check
 - Enhanced critical file safety with confirmation requirements

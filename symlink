@@ -38,12 +38,14 @@ declare -a ERROR_LINKS=()
 
 # Message functions for formatting output
 declare -- RED='' YELLOW='' GREEN='' CYAN='' NOCOLOR=''
-[ -t 2 ] && { RED=$'\e[31m' YELLOW=$'\e[33m' GREEN=$'\e[32m' CYAN=$'\e[36m' NOCOLOR=$'\e[0m'; }
-error()   { printf '%s%s: %s%s\n' "$RED" "$PRG" "$*" "$NOCOLOR" >&2; }
-warn()    { if ((VERBOSE)); then printf '%s%s: %s%s\n' "$YELLOW" "$PRG" "$*" "$NOCOLOR" >&2; fi; }
-info()    { if ((VERBOSE)); then printf '%s: %s\n' "$PRG" "$*" >&2; fi; }
-success() { if ((VERBOSE)); then printf '%s%s: %s%s\n' "$GREEN" "$PRG" "$*" "$NOCOLOR" >&2; fi; }
-debug()   { if ((DEBUG));   then printf '%s%s DEBUG: %s%s\n' "$CYAN" "$PRG" "$*" "$NOCOLOR" >&2; fi; }
+[ -t 2 ] && RED=$'\e[31m' YELLOW=$'\e[33m' GREEN=$'\e[32m' CYAN=$'\e[36m' NOCOLOR=$'\e[0m' || true
+text()    { printf '%s%s: %s%s\n' "$GREEN" "$PRG" "$*" "$NOCOLOR"; }
+error()   { if                (($#)); then >&2 printf '%s%s: %s%s\n' "$RED" "$PRG" "$*" "$NOCOLOR"; fi; }
+warn()    { if ((VERBOSE)) && (($#)); then >&2 printf '%s%s: %s%s\n' "$YELLOW" "$PRG" "$*" "$NOCOLOR"; fi; }
+info()    { if ((VERBOSE)) && (($#)); then >&2 printf '%s: %s\n' "$PRG" "$*"; fi; }
+success() { if ((VERBOSE)) && (($#)); then >&2 printf '%s%s: %s%s\n' "$GREEN" "$PRG" "$*" "$NOCOLOR"; fi; }
+debug()   { if ((DEBUG))   && (($#)); then >&2 printf '%s%s DEBUG: %s%s\n' "$CYAN" "$PRG" "$*" "$NOCOLOR"; fi; }
+die() { error "${2:-}"; exit "${1:-1}"; }
 
 # Pre-Check DEBUG flag -----------------
 # Enable debug mode if requested through environment variable or command line flag
@@ -188,9 +190,9 @@ is_critical_file() {
 
 # Create a symbolic link (handles errors and critical system files)
 create_symlink() {
-  debug "create_symlink: $1 → $2"
   local -- source_path="$1"
   local -- target_dir="$2"
+  debug "create_symlink: $source_path → $target_path"
   local -- target_name
   local -- target_path
   local -- yn
@@ -418,15 +420,12 @@ delete_broken_symlinks() {
 
   # REAL MODE: Actually delete broken symlinks
   debug "Finding and deleting broken symlinks (safe approach)"
-
   # The same pure bash approach - safer than using find
   for link in "$target_dir"/*; do
     # Skip if it's not a symlink
     [[ -L "$link" ]] || continue
-
     # Skip if the symlink target exists (i.e., not broken)
     [[ -e "$link" ]] && continue
-
     # This is a broken symlink - delete it
     info "Deleting broken symlink: '$link'"
     if rm "$link"; then
@@ -448,14 +447,14 @@ print_summary() {
   if ((DRY_RUN)); then
     if (( ${#CREATED_LINKS[@]} == 0 && ${#REPLACED_LINKS[@]} ==0 &&
           ${#SKIPPED_LINKS[@]} ==0 && ${#ERROR_LINKS[@]} == 0 )); then
-      echo "No operations would be performed."
+      echo "[DRY RUN] No operations would be performed."
       return 0
     fi
     echo "<DRY RUN> SUMMARY"
   else
     if (( ${#CREATED_LINKS[@]} == 0 && ${#REPLACED_LINKS[@]} == 0 &&
           ${#SKIPPED_LINKS[@]} == 0 && ${#ERROR_LINKS[@]} == 0 )); then
-      ((VERBOSE)) && echo "No operations performed."
+      ((VERBOSE)) && echo "[DRY RUN] No operations performed."
       return 0
     fi
     echo "SUMMARY"
@@ -534,7 +533,7 @@ main() {
                         set -- '' $(printf -- "-%c " $(grep -o . <<<"${1:1}")) "${@:2}"
                         ;;
     # Error handling
-    -*)                 error "Invalid option '$1'"; exit 22 ;;
+    -*)                 die 22 "Invalid option '$1'" ;;
     # Collect non-option arguments as target files/paths
     *)                  targets+=("$1") ;;
   esac; shift; done
@@ -544,24 +543,15 @@ main() {
   # Only check target dir if not in dry-run mode
   if ((DRY_RUN == 0)); then
     # Check if target directory exists and is writable
-    if [[ ! -d "$target_dir" ]]; then
-      error "Target directory does not exist: '$target_dir'"
-      exit 3
-    fi
+    [[ ! -d "$target_dir" ]] && die 3 "Target directory does not exist: '$target_dir'"
 
-    if [[ ! -w "$target_dir" ]]; then
-      error "No write permission on target directory: '$target_dir'"
-      exit 2
-    fi
+    [[ ! -w "$target_dir" ]] && die 2 "No write permission on target directory: '$target_dir'"
   fi
 
   # Process .symlink files if -l or -S options were used
   if ((LISTIT + SCANSYMLINK)); then
     # Allow only one startpath for listing or scanning operations
-    ((${#targets[@]} > 1)) && {
-      error "Can only specify one startpath for $( ((LISTIT)) && echo "listing" || echo "scanning" )."
-      exit 1
-    }
+    ((${#targets[@]} > 1)) && die 1 "Can only specify one startpath for $( ((LISTIT)) && echo "listing" || echo "scanning" )."
 
     local -- startpath="$ORIG_DIR"
     local -- symlink
@@ -582,26 +572,16 @@ main() {
 
     # Add timeout to readlink command to prevent hanging
     if ! startpath=$(timeout 2 readlink -f -- "$startpath" 2>/dev/null || timeout 2 readlink -en -- "$startpath" 2>/dev/null); then
-      error "Failed to resolve path (timeout or error)"
-      exit 1
+      die 1 "Failed to resolve path (timeout or error)"
     fi
 
-    if [[ -z "$startpath" ]]; then
-      error "Failed to resolve path: empty result"
-      exit 1
-    fi
+    [[ -z "$startpath" ]] && die 1 "Failed to resolve path: empty result"
 
     info "Resolved path: '$startpath'"
-    if [[ ! -d "$startpath" ]]; then
-      error "Path is not a directory: '$startpath'"
-      exit 3
-    fi
+    [[ -d "$startpath" ]] || die 3 "Path is not a directory: '$startpath'"
 
     # Ensure the path exists and is accessible
-    if ! [[ -x "$startpath" ]]; then
-      error "Path exists but is not accessible: '$startpath'"
-      exit 2
-    fi
+    [[ -x "$startpath" ]] || die 2 "Path exists but is not accessible: '$startpath'"
 
     # Handle the -l (list) option - just show contents of .symlink files
     if ((LISTIT)); then
@@ -629,14 +609,11 @@ main() {
                   -type f -name '.symlink' 2>/dev/null \
                 | sort -u
               ); then
-          error "Error finding .symlink files for listing"
-          exit 1
+          die 1 "Error finding .symlink files for listing"
         fi
 
-        if (( ${#symlink_files[@]} == 0 )); then
-          warn "No .symlink files found in '$startpath'"
-          exit 50
-        fi
+        (( ${#symlink_files[@]})) \
+            || die 50 "No .symlink files found in '$startpath'"
       fi
 
       debug "Found ${#symlink_files[@]} .symlink files for listing"
@@ -659,8 +636,7 @@ main() {
     debug "Start path for symlink scan: '$startpath'"
 
     if [[ ! -d "$startpath" ]] || [[ ! -r "$startpath" ]]; then
-      error "Cannot access directory: '$startpath'"
-      exit 3
+      die 3 "Cannot access directory: '$startpath'"
     fi
 
     # First check if the startpath is actually /usr/local/bin or contains it
@@ -668,27 +644,18 @@ main() {
       # We're scanning in or below the target directory, which is dangerous
       warn "Scanning in target directory ($DEFAULT_TARGET_DIR) is not recommended"
       # To be extra safe, we just find the direct .symlink file
-      if [[ -f "$startpath/.symlink" ]]; then
-        symlinks=("$startpath/.symlink")
-      else
-        warn "No .symlink files found in '$startpath'"
-        exit 50
-      fi
+      [[ -f "$startpath/.symlink" ]] || die 50 "No .symlink files found in '$startpath'"
+      symlinks=("$startpath/.symlink")
     else
       # For standard directories, do a limited depth search
-      if ! mapfile -t symlinks < <(
+      mapfile -t symlinks < <(
           find "$startpath" -maxdepth "$FIND_MAX_DEPTH" \
               -type f -name '.symlink' 2>/dev/null \
             | sort -u
-          ); then
-        error "Error finding .symlink files"
-        exit 1
-      fi
+          ) \
+        ||  die 1 "Error finding .symlink files"
 
-      if (( ${#symlinks[@]} == 0 )); then
-        warn "No .symlink files found in '$startpath'"
-        exit 50
-      fi
+      (( ${#symlinks[@]} )) || die 50 "No .symlink files found in '$startpath'"
     fi
 
     debug "Found ${#symlinks[@]} .symlink files to process"
@@ -697,8 +664,7 @@ main() {
 
     # Process each .symlink file in batches
     if (( ${#symlinks[@]} == 0 )); then
-      warn "No .symlink files to process"
-      exit 50
+      die 50 "No .symlink files to process"
     fi
 
     local -i batch_size=5
@@ -791,17 +757,14 @@ main() {
 
   else
     # Process individual target files
-    if (( ${#targets[@]} == 0)); then
-      error "No target files specified. Use $PRG --help for usage information."
-      exit 1
-    fi
+    (( ${#targets[@]} )) || die 1 "No target files specified. Use $PRG --help for usage information."
 
     info "Processing ${#targets[@]} individual target files"
 
     # Process each target file
     local -i processed=0
     for target in "${targets[@]}"; do
-      [[ -n "$target" ]] || { error "Empty target specified. Skipping."; continue; }
+      [[ -n "$target" ]] || { warn "Empty target specified. Skipping."; continue; }
       info "Processing: $target ($((processed+1))/${#targets[@]})"
       create_symlink "$target" "$target_dir" || true
       ((processed++))

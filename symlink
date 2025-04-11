@@ -315,6 +315,8 @@ create_symlink() {
   if [[ -L "$target_path" ]]; then
     info "Symlink exists: '$target_path'"
 
+    change_symlink_owner_perms "$source_abs_path" "$target_path"
+
     # Check if it's already pointing to our target
     local -- current_target
     current_target=$(readlink -f -- "$target_path" 2>/dev/null || readlink -en -- "$target_path")
@@ -376,17 +378,25 @@ create_symlink() {
   CREATED_LINKS+=("$source_path → $target_path")
   success "Created symlink: '$target_name'"
 
-  # Get owner and group of the target file
-  local -- owner=$(stat -c '%U' "$source_abs_path")
-  local -- group=$(stat -c '%G' "$source_abs_path")
-  # Change ownership of the symlink to match the target
-  chown -h "$owner":"$group" "$target_path"
-  # Update the timestamp of the symlink to match the target
-  touch -h -r "$source_abs_path" "$target_path"
+  change_symlink_owner_perms "$source_abs_path" "$target_path"
 
   # Show details of the created symlink if verbose
   ((VERBOSE)) && { ls -lsd "$target_path" 2>/dev/null || true; }
 
+  return 0
+}
+
+change_symlink_owner_perms() {
+  local source_abs_path="$1" target_path="$2"
+  # Get owner and group of the target file
+  local -- owner=$(stat -c '%U' "$source_abs_path")
+  local -- group=$(stat -c '%G' "$source_abs_path")
+  # Update the timestamp of the symlink to match the target
+  debug "touch -h -r $source_abs_path $target_path"
+  touch -h -r "$source_abs_path" "$target_path"
+  # Change ownership of the symlink to match the target
+  debug "chown -h $owner:$group $target_path"
+  chown -h "$owner":"$group" "$target_path"
   return 0
 }
 
@@ -738,6 +748,7 @@ main() {
 
             if ln -sf "$(readlink -f "$script_path")" "$target_dir/$(basename "$script_path")"; then
               info "Created symlink: $script_path → $target_dir/$(basename "$script_path")"
+              change_symlink_owner_perms "$script_path" "$target_dir/$(basename "$script_path")"
               CREATED_LINKS+=("$script_path → $target_dir/$(basename "$script_path")")
             else
               error "Failed to create symlink: $script_path → $target_dir/$(basename "$script_path")"

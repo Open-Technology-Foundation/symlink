@@ -42,6 +42,7 @@ This:
 - **Flexible Output**: Verbose, quiet, and debug output modes with color support
 - **Dry-Run Mode**: Preview operations without making changes
 - **Smart Summary**: Reports created, replaced, skipped, and error links
+- **Ownership Preservation**: Maintains original file's owner and permissions on symlinks
 
 ## `.symlink` File Format
 
@@ -92,6 +93,9 @@ sudo symlink -SPd
 
 # With interactive prompts
 sudo symlink -S /path/to/project
+
+# Debug mode with dry-run
+symlink --debug -nSPd /path/to/scripts
 ```
 
 ### List `.symlink` Files
@@ -106,40 +110,66 @@ sudo symlink /path/to/my/script
 
 # Multiple files
 sudo symlink /path/to/script1 /path/to/script2
+
+# Dry run to preview changes
+symlink -n ./my-script.sh
 ```
 
 ## Command-Line Options
 
 | Option | Description |
 |--------|-------------|
-| `-S` | Scan for `.symlink` files and process them (limited to depth 5) |
-| `-P` | Skip confirmation prompts for existing symlinks |
-| `-d` | Clean up broken symlinks in target directory |
-| `-t` | Specify custom target directory (default: `/usr/local/bin`) |
-| `-l` | List contents of `.symlink` files only (no symlinking) |
-| `-n` | Dry-run mode (show what would happen without changes) |
-| `-v` | Verbose output with additional details |
-| `-q` | Quiet mode (suppresses informational messages) |
-| `-h` | Display help message |
-| `-V` | Show version information |
-| `--debug` | Debug mode with detailed logging to trace file |
+| `-S, --scan-symlink` | Scan for `.symlink` files and process them |
+| `-P, --no-prompt` | Skip confirmation prompts for existing symlinks |
+| `-d, --delete-broken-symlinks` | Clean up broken symlinks in target directory |
+| `-t, --target-dir` | Specify custom target directory (default: `/usr/local/bin`) |
+| `-l, --list` | List contents of `.symlink` files only (no symlinking) |
+| `-n, --dry-run` | Dry-run mode (show what would happen without changes) |
+| `-v, --verbose` | Verbose output with additional details |
+| `-q, --quiet` | Quiet mode (suppresses informational messages) |
+| `-h, --help` | Display help message |
+| `-V, --version` | Show version information |
+| `-D, --debug` | Debug mode with detailed logging to trace file |
 
 **Tip:** Combine options: `-SPd` for no-prompt scan with cleanup
 
+## Operation Modes
+
+1. **Direct Linking**:
+   ```bash
+   symlink [-P] [-d] [-v|-q] [-n] scriptpath [scriptpath...]
+   ```
+   Links specific executable files to `/usr/local/bin`.
+
+2. **Scan-based Linking**:
+   ```bash
+   symlink -S [-P] [-d] [-v|-q] [-n] [startpath]
+   ```
+   Scans for `.symlink` files and creates links for files listed in them.
+   If startpath is omitted, the current directory is used.
+
+3. **List-only Mode**:
+   ```bash
+   symlink -l [startpath]
+   ```
+   Lists contents of all `.symlink` files without creating links.
+
 ## Safety Features
 
-- Critical system files (`bash`, `sh`, `ls`, `cp`, `mv`, `rm`, `sudo`, `chmod`, `chown`) require explicit confirmation
+- Critical system files (53 system binaries) require explicit confirmation
 - Scanning in target directory is restricted to prevent recursive issues
 - Path resolution operations have timeouts to prevent hanging
 - Batch processing with progress tracking for reliable completion
 - Pure Bash approach for broken symlink detection to avoid recursion issues
+- Auto-detection of interactive/non-interactive mode
+- Ownership and permissions preservation for symlinks
 
 ## Requirements
 
 - Bash 4.0+
 - Root privileges (auto-elevates with sudo)
 - Write access to `/usr/local/bin` (or custom target directory)
-- Standard Linux utilities (find, readlink, timeout)
+- Standard Linux utilities (readlink, timeout)
 
 ## Exit Codes
 
@@ -181,34 +211,3 @@ SYMLINK_FORCE_CRITICAL=1 symlink -SP /path/to/script
 ## Contributing
 
 Contributions welcome via Pull Requests.
-
-## Changelog
-
-### Version 1.3.7
-- Fixed hanging issues in broken symlink cleanup and path resolution
-- Improved non-interactive mode detection with `[[ -t 0 ]]` terminal check
-- Enhanced critical file safety with confirmation requirements
-- Added the `SYMLINK_FORCE_CRITICAL` environment variable for automated scripts
-- Implemented timeout-based path resolution to prevent hanging
-- Added pure Bash approach for scanning to avoid recursion issues
-- Limited directory scanning depth to 5 levels for safety
-- Improved batch processing with progress tracking
-- Enhanced error handling with better reporting
-
-### Version 1.3.0
-- Added debug mode with comprehensive logging to trace files
-- Implemented batch processing for multiple `.symlink` files
-- Fixed sudo elevation issues with proper environment preservation
-- Added progress tracking for batch operations
-- Improved error handling and recovery strategies
-
-### Version 1.2.0
-- Added dry-run mode for previewing operations without changes
-- Improved handling of critical system files with warnings
-- Enhanced error reporting and exit code consistency
-
-### Version 1.1.0 
-- Added `.symlink` file support for batch symlinking
-- Implemented directory scanning for `.symlink` files
-- Added broken symlink cleanup functionality
-- Added support for handling existing files/symlinks

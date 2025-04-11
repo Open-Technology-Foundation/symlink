@@ -1,8 +1,17 @@
 #!/bin/bash
 #shellcheck disable=SC2034,SC1091,SC2155
-# symlink v1.3.7 - Creates symlinks in /usr/local/bin for executables
-# Features: .symlink config files, dry-run, debug logging, auto-sudo,
-# broken link cleanup, and safety measures for system files
+# symlink v1.3.7 - Creates symlinks in /usr/local/bin for executable files
+#
+# Creates symbolic links in /usr/local/bin for executable files, making them
+# accessible system-wide. Features include:
+#   - .symlink configuration files for batch processing
+#   - Auto-sudo for elevated privileges
+#   - Interactive/non-interactive mode detection
+#   - Safety features for critical system files
+#   - Debug mode with detailed logging
+#   - Dry-run mode to preview changes
+#   - Broken symlink detection and cleanup
+#   - Ownership and permissions preservation
 # License: GPL-3.0
 set -euo pipefail
 # Enforce root privileges at the very beginning
@@ -129,16 +138,19 @@ OPTIONS:
   -l, --list             List contents of all .symlink files only
   -n, --dry-run          Show what would happen without making changes
   -v, --verbose          Show detailed output
-  -q, --quiet            Suppress informational messages (default)
+  -q, --quiet            Suppress informational messages (default in non-interactive mode)
   -V, --version          Display version information
   -h, --help             Show this help message
   -D, --debug            Enable debug mode with detailed logging
 
 SAFETY FEATURES:
-  • Critical system files (${CRITICAL_FILES[*]}) require explicit confirmation
+  • Critical system files (${#CRITICAL_FILES[@]} system binaries) require explicit confirmation
   • Scanning in $DEFAULT_TARGET_DIR is restricted for safety
   • Path resolution operations have timeouts to prevent hanging
   • All operations can be previewed with dry-run mode
+  • Auto-detection of interactive/non-interactive mode
+  • Ownership and permissions preservation for symlinks
+  • Batch processing with controlled execution
 
 EXIT CODES:
   0: Success
@@ -192,7 +204,6 @@ is_critical_file() {
 create_symlink() {
   local -- source_path="$1"
   local -- target_dir="$2"
-  debug "create_symlink: $source_path → $target_path"
   local -- target_name
   local -- target_path
   local -- yn
@@ -201,6 +212,7 @@ create_symlink() {
   # Get target filename
   target_name=$(basename "$source_path")
   target_path="${target_dir}/${target_name}"
+  debug "create_symlink: $source_path → $target_path"
 
   # Check if the source file exists and is executable
   if [[ ! -f "$source_path" ]]; then
@@ -386,19 +398,22 @@ create_symlink() {
   return 0
 }
 
+# Updates the symlink's ownership, permissions, and timestamp to match the source file
+# This ensures the symlink maintains the same ownership, permissions, and timestamp as the original file
 change_symlink_owner_perms() {
   local source_abs_path="$1" target_path="$2"
-  # Get owner and group of the target file
+  # Get owner and group of the source file
   local -- owner=$(stat -c '%U' "$source_abs_path")
   local -- group=$(stat -c '%G' "$source_abs_path")
-  # Update the timestamp of the symlink to match the target
+  # Get permissions of the source file
   debug "touch -h -r $source_abs_path $target_path"
   touch -h -r "$source_abs_path" "$target_path"
-  # Change ownership of the symlink to match the target
+  # Change ownership of the symlink to match the source
   debug "chown -h $owner:$group $target_path"
   chown -h "$owner":"$group" "$target_path"
   return 0
 }
+
 
 # Find and delete broken symlinks in the target directory
 delete_broken_symlinks() {
@@ -451,9 +466,11 @@ delete_broken_symlinks() {
   return 0
 }
 
-# Print summary of operations performed
+# Print a detailed summary of all operations performed
+# Shows created, replaced, skipped, and error links
+# Adapts output based on DRY_RUN and VERBOSE flags
 print_summary() {
-  # Skip summary for dry run mode - we'll have a final message instead
+  # Format output differently for dry run mode
   if ((DRY_RUN)); then
     if (( ${#CREATED_LINKS[@]} == 0 && ${#REPLACED_LINKS[@]} ==0 &&
           ${#SKIPPED_LINKS[@]} ==0 && ${#ERROR_LINKS[@]} == 0 )); then
@@ -512,7 +529,8 @@ print_summary() {
   return 0
 }
 
-# Main ===========================================================================
+# Main function - handles argument parsing and orchestrates program flow
+# ============================================================================
 main() {
   local -a targets=() # array of script paths to symlink
   local -- target_dir=''

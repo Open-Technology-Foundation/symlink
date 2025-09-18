@@ -1,5 +1,10 @@
-# Test symlink file
-# This lists executable files that should be symlinked
+# .symlink format
+# .symlink in a directory tells symlink which executable 
+# files must be symlinked to /usr/local/bin
+# when using 'symlink -SP'
 
-# The symlink script itself
+# The symlink program itself
 symlink
+
+# and add any other programs
+# ...

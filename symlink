@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #shellcheck disable=SC2034,SC1091,SC2155
 # symlink v1.3.7 - Creates symlinks in /usr/local/bin for executable files
 #
@@ -21,14 +21,14 @@ set -euo pipefail
   exit $?
 }
 
-readonly VERSION='1.3.7'
-readonly PRG0=$(readlink -fn -- "$0" 2>/dev/null || readlink -en -- "$0")
-readonly PRG=$(basename -- "$PRG0")
-readonly PRGDIR=$(dirname -- "$PRG0")
-readonly ORIG_DIR=$(pwd)
-readonly DEFAULT_TARGET_DIR=/usr/local/bin
-#readonly CRITICAL_FILES=(bash sh ls cp mv rm sudo chmod chown)
-readonly CRITICAL_FILES=(awk bash cat chgrp chmod chown clang cp dash date df du echo file find gcc git grep groupadd groupdel head hostname ifconfig ip kill less login ls make mkdir mount mv netstat passwd ping ps reboot rm rmdir sed sh shutdown ss sudo tail top touch umount useradd userdel vi vim zsh )
+VERSION='1.3.8'
+PRG0=$(readlink -fn -- "$0" 2>/dev/null || readlink -en -- "$0")
+PRG=${PRG0##*/}
+PRGDIR=${PRG0%/*}
+ORIG_DIR=$(pwd)
+DEFAULT_TARGET_DIR='/usr/local/bin'
+CRITICAL_FILES=(awk bash cat chgrp chmod chown clang cp dash date df du echo file find gcc git grep groupadd groupdel head hostname ifconfig ip kill less login ls make mkdir mount mv netstat passwd ping ps reboot rm rmdir sed sh shutdown ss sudo tail top touch umount useradd userdel vi vim zsh)
+readonly -- VERSION PRG0 PRG PRGDIR ORIG_DIR DEFAULT_TARGET_DIR CRITICAL_FILES
 # Initialize key variables early
 declare -i DRY_RUN=0 VERBOSE=0 DEBUG=0
 # Set PROMPT based on whether we're running interactively
@@ -45,18 +45,69 @@ declare -a REPLACED_LINKS=()
 declare -a SKIPPED_LINKS=()
 declare -a ERROR_LINKS=()
 
-# Message functions for formatting output
-declare -- RED='' YELLOW='' GREEN='' CYAN='' NOCOLOR=''
-[ -t 2 ] && RED=$'\e[31m' YELLOW=$'\e[33m' GREEN=$'\e[32m' CYAN=$'\e[36m' NOCOLOR=$'\e[0m' || true
-text()    { printf '%s%s: %s%s\n' "$GREEN" "$PRG" "$*" "$NOCOLOR"; }
-error()   { if                (($#)); then >&2 printf '%s%s: %s%s\n' "$RED" "$PRG" "$*" "$NOCOLOR"; fi; }
-warn()    { if ((VERBOSE)) && (($#)); then >&2 printf '%s%s: %s%s\n' "$YELLOW" "$PRG" "$*" "$NOCOLOR"; fi; }
-info()    { if ((VERBOSE)) && (($#)); then >&2 printf '%s: %s\n' "$PRG" "$*"; fi; }
-success() { if ((VERBOSE)) && (($#)); then >&2 printf '%s%s: %s%s\n' "$GREEN" "$PRG" "$*" "$NOCOLOR"; fi; }
-debug()   { if ((DEBUG))   && (($#)); then >&2 printf '%s%s DEBUG: %s%s\n' "$CYAN" "$PRG" "$*" "$NOCOLOR"; fi; }
-die() { error "${2:-}"; exit "${1:-1}"; }
+# --------------------------------------------------------------------------------
+# Message functions and color support
+# --------------------------------------------------------------------------------
+if [[ -t 2 ]]; then
+  declare -- RED=$'\033[0;31m' GREEN=$'\033[0;32m' YELLOW=$'\033[0;33m' CYAN=$'\033[0;36m' NC=$'\033[0m'
+else
+  declare -- RED='' GREEN='' YELLOW='' CYAN='' NC=''
+fi
+readonly -- RED GREEN YELLOW CYAN NC
 
-# Pre-Check DEBUG flag -----------------
+# Core message function using FUNCNAME for context
+_msg() {
+  local -- status="${FUNCNAME[1]}" prefix="$PRG:" msg
+  case "$status" in
+    success) prefix+=" ${GREEN}✓${NC}" ;;
+    warn)    prefix+=" ${YELLOW}⚡${NC}" ;;
+    info)    prefix+=" ${CYAN}◉${NC}" ;;
+    error)   prefix+=" ${RED}✗${NC}" ;;
+    debug)   prefix+=" ${RED}DEBUG${NC}:" ;;
+    *)       ;;
+  esac
+  for msg in "$@"; do printf '%s %s\n' "$prefix" "$msg"; done
+}
+
+# Conditional output based on verbosity
+vecho() { ((VERBOSE)) || return 0; _msg "$@"; }
+success() { ((VERBOSE)) || return 0; >&2 _msg "$@"; }
+warn() { ((VERBOSE)) || return 0; >&2 _msg "$@"; }
+info() { ((VERBOSE)) || return 0; >&2 _msg "$@"; }
+debug() { ((DEBUG)) || return 0; >&2 _msg "$@"; }
+# Unconditional output
+error() { >&2 _msg "$@"; }
+die() { (($# > 1)) && error "${@:2}"; exit "${1:-0}"; }
+
+# --------------------------------------------------------------------------------
+# Utility functions
+# --------------------------------------------------------------------------------
+# Validate argument presence
+noarg() {
+  if (($# < 2)) || [[ ${2:0:1} == '-' ]]; then
+    die 2 "Missing argument for option '$1'"
+  fi
+  true
+}
+
+# Display declared variables for debugging
+decp() { declare -p "$@" | sed 's/^declare -[a-zA-Z-]* //'; }
+
+# Pluralization helper
+s() { (( ${1:-1} == 1 )) || echo -n 's'; }
+
+# yes/no prompt
+yn() {
+  ((PROMPT)) || return 0
+  local -- reply
+  read -r -n1 -p "$PRG: ${YELLOW}$1${NC} (y/n) " reply
+  echo
+  [[ ${reply,,} == y ]]
+}
+
+# --------------------------------------------------------------------------------
+# Pre-Check DEBUG flag
+# --------------------------------------------------------------------------------
 # Enable debug mode if requested through environment variable or command line flag
 [[ -n "${SYMLINK_DEBUG:-}" ]] && DEBUG=1
 if (($#)); then
@@ -76,9 +127,11 @@ fi
 # Root privileges are now enforced at the beginning of the script
 debug "Running as root user: EUID=$EUID"
 
-# Display usage information and exit with success
+# --------------------------------------------------------------------------------
+# Display usage information and exit
+# --------------------------------------------------------------------------------
 usage() {
-  local exit_code="${1:-0}"
+  local -i exit_code="${1:-0}"
   cat <<EOT
 $PRG $VERSION - Create symlinks in /usr/local/bin for executable files
 
@@ -184,6 +237,9 @@ EOT
   exit "$exit_code"
 }
 
+# --------------------------------------------------------------------------------
+# String manipulation functions
+# --------------------------------------------------------------------------------
 # Remove leading/trailing whitespace from a string
 trim() {
   local -- v="$*"
@@ -191,22 +247,25 @@ trim() {
   echo -n "${v%"${v##*[![:blank:]]}"}"  # Remove trailing whitespace
 }
 
+# --------------------------------------------------------------------------------
+# File validation functions
+# --------------------------------------------------------------------------------
 # Check if a file is a critical system file
 is_critical_file() {
-  local -- filename="$1"
+  local -- filename="$1" critical
   for critical in "${CRITICAL_FILES[@]}"; do
     [[ "$filename" == "$critical" ]] && return 0
   done
   return 1
 }
 
+# --------------------------------------------------------------------------------
+# Core symlink operations
+# --------------------------------------------------------------------------------
 # Create a symbolic link (handles errors and critical system files)
 create_symlink() {
-  local -- source_path="$1"
-  local -- target_dir="$2"
-  local -- target_name
-  local -- target_path
-  local -- yn
+  local -- source_path="$1" target_dir="$2"
+  local -- target_name target_path yn
   local -i exit_code=0
 
   # Get target filename
@@ -279,8 +338,7 @@ create_symlink() {
 
     # Always prompt for critical files, unless explicitly overridden with environment variable
     if ((PROMPT)) || [[ -z "${SYMLINK_FORCE_CRITICAL:-}" ]]; then
-      read -r -p "Are you ABSOLUTELY SURE you want to replace it? (y/n) " yn
-      if [[ "${yn,,}" != "y" ]]; then
+      if ! yn "Are you ABSOLUTELY SURE you want to replace it?"; then
         info "Skipping '$target_name' (critical system file)"
         SKIPPED_LINKS+=("$source_path → $target_path (critical file)")
         return 0
@@ -339,8 +397,7 @@ create_symlink() {
     fi
 
     if ((PROMPT)); then
-      read -r -p "Remove existing symlink? (y/N) " yn
-      if [[ "${yn,,}" != "y" ]]; then
+      if ! yn "Remove existing symlink?"; then
         info "Skipping '$target_name'"
         SKIPPED_LINKS+=("$source_path → $target_path (user skipped)")
         return 0
@@ -361,8 +418,7 @@ create_symlink() {
   if [[ -e "$target_path" ]]; then
     info "File exists: '$target_path'"
     if ((PROMPT)); then
-      read -r -p "Remove existing file? (y/N) " yn
-      if [[ "${yn,,}" != "y" ]]; then
+      if ! yn "Remove existing file?"; then
         info "Skipping '$target_name'"
         SKIPPED_LINKS+=("$source_path → $target_path (user skipped)")
         return 0
@@ -401,10 +457,11 @@ create_symlink() {
 # Updates the symlink's ownership, permissions, and timestamp to match the source file
 # This ensures the symlink maintains the same ownership, permissions, and timestamp as the original file
 change_symlink_owner_perms() {
-  local source_abs_path="$1" target_path="$2"
+  local -- source_abs_path="$1" target_path="$2"
   # Get owner and group of the source file
-  local -- owner=$(stat -c '%U' "$source_abs_path")
-  local -- group=$(stat -c '%G' "$source_abs_path")
+  local -- owner group
+  owner=$(stat -c '%U' "$source_abs_path")
+  group=$(stat -c '%G' "$source_abs_path")
   # Get permissions of the source file
   debug "touch -h -r $source_abs_path $target_path"
   touch -h -r "$source_abs_path" "$target_path"
@@ -415,9 +472,12 @@ change_symlink_owner_perms() {
 }
 
 
+# --------------------------------------------------------------------------------
+# Cleanup operations
+# --------------------------------------------------------------------------------
 # Find and delete broken symlinks in the target directory
 delete_broken_symlinks() {
-  local -- target_dir="$1"
+  local -- target_dir="$1" link
   local -i count=0
   local -a broken_links=()
 
@@ -466,6 +526,9 @@ delete_broken_symlinks() {
   return 0
 }
 
+# --------------------------------------------------------------------------------
+# Summary and reporting
+# --------------------------------------------------------------------------------
 # Print a detailed summary of all operations performed
 # Shows created, replaced, skipped, and error links
 # Adapts output based on DRY_RUN and VERBOSE flags
@@ -477,23 +540,24 @@ print_summary() {
       echo "[DRY RUN] No operations would be performed."
       return 0
     fi
-    echo "<DRY RUN> SUMMARY"
+    echo "<DRY RUN>"
   else
     if (( ${#CREATED_LINKS[@]} == 0 && ${#REPLACED_LINKS[@]} == 0 &&
           ${#SKIPPED_LINKS[@]} == 0 && ${#ERROR_LINKS[@]} == 0 )); then
       ((VERBOSE)) && echo "[DRY RUN] No operations performed."
       return 0
     fi
-    echo "SUMMARY"
   fi
 
   # Calculate total processed
-  local -i total=$(( ${#CREATED_LINKS[@]} + ${#REPLACED_LINKS[@]} + ${#SKIPPED_LINKS[@]} + ${#ERROR_LINKS[@]} ))
-  echo "Total processed: $total"
+  local -i total
+  total=$(( ${#CREATED_LINKS[@]} + ${#REPLACED_LINKS[@]} + ${#SKIPPED_LINKS[@]} + ${#ERROR_LINKS[@]} ))
+  echo "Symlinks processed: $total"
 
   (( ${#CREATED_LINKS[@]} )) && {
-    echo "Created symlinks: ${#CREATED_LINKS[@]}"
+    echo "Symlinks created: ${#CREATED_LINKS[@]}"
     ((VERBOSE)) && {
+      local -- link
       for link in "${CREATED_LINKS[@]}"; do
         echo "  $link"
       done
@@ -501,8 +565,9 @@ print_summary() {
   }
 
   (( ${#REPLACED_LINKS[@]} )) && {
-    echo "Replaced symlinks: ${#REPLACED_LINKS[@]}"
+    echo "Symlinks replaced: ${#REPLACED_LINKS[@]}"
     ((VERBOSE)) && {
+      local -- link
       for link in "${REPLACED_LINKS[@]}"; do
         echo "  $link"
       done
@@ -512,6 +577,7 @@ print_summary() {
   (( ${#SKIPPED_LINKS[@]} )) && {
     echo "Skipped symlinks: ${#SKIPPED_LINKS[@]}"
     ((VERBOSE)) && {
+      local -- link
       for link in "${SKIPPED_LINKS[@]}"; do
         echo "  $link"
       done
@@ -521,6 +587,7 @@ print_summary() {
   # Always show errors regardless of verbosity
   (( ${#ERROR_LINKS[@]} )) && {
     echo "Errors: ${#ERROR_LINKS[@]}"
+    local -- link
     for link in "${ERROR_LINKS[@]}"; do
       echo "  $link"
     done
@@ -529,12 +596,12 @@ print_summary() {
   return 0
 }
 
+# --------------------------------------------------------------------------------
 # Main function - handles argument parsing and orchestrates program flow
-# ============================================================================
+# --------------------------------------------------------------------------------
 main() {
   local -a targets=() # array of script paths to symlink
-  local -- target_dir=''
-  local -- scriptpath scriptprg target='' yn
+  local -- target_dir='' scriptpath scriptprg target='' yn
   local -i exit_code=0
 
   # Show usage if no arguments provided
@@ -581,8 +648,7 @@ main() {
     # Allow only one startpath for listing or scanning operations
     ((${#targets[@]} > 1)) && die 1 "Can only specify one startpath for $( ((LISTIT)) && echo "listing" || echo "scanning" )."
 
-    local -- startpath="$ORIG_DIR"
-    local -- symlink
+    local -- startpath="$ORIG_DIR" symlink
 
     # Use the provided path if available, otherwise use current directory
     if ((${#targets[@]})); then
@@ -617,6 +683,7 @@ main() {
       info "  starting in '$startpath'"
 
       local -a symlink_files=()
+      local -- symlink
       debug "Finding .symlink files"
 
       # First check if the startpath is actually /usr/local/bin or contains it
@@ -647,7 +714,8 @@ main() {
       debug "Found ${#symlink_files[@]} .symlink files for listing"
 
       for symlink in "${symlink_files[@]}"; do
-        local -- symlink_dir=$(dirname -- "$symlink")
+        local -- symlink_dir
+        symlink_dir=$(dirname -- "$symlink")
         echo "$(basename -- "$symlink_dir")/.symlink (${symlink_dir}):"
         grep -v '^$\|^#' "$symlink" | sed 's/^/    /'
         echo
@@ -658,6 +726,7 @@ main() {
     # Handle the -S (scan) option - process .symlink files
     info "Scanning for all .symlink files starting in '$startpath'"
     local -a symlinks=()
+    local -- symlink
 
     # Safety first: Use controlled approach to avoid recursion issues
     startpath="${startpath%/}"  # Remove trailing slash if present
@@ -718,7 +787,8 @@ main() {
         info "Processing: $symlink ($((i+1))/$total)"
 
         # Get the directory containing the .symlink file
-        local -- symlink_dir=$(dirname -- "$symlink")
+        local -- symlink_dir
+        symlink_dir=$(dirname -- "$symlink")
         local -i count=0
 
         # Read the .symlink file
@@ -732,7 +802,7 @@ main() {
 
           # Get the full path to the script
           local -- script_path="$symlink_dir/$line"
-          count=$((count+1))
+          ((count+=1))
 
           if ((DRY_RUN)); then
             # For dry run, just check if it exists
@@ -776,7 +846,7 @@ main() {
         done < "$symlink"
 
         debug "Processed $count entries from $symlink"
-        processed=$((processed+1))
+        ((processed+=1))
       done
 
       debug "Completed batch $((batch+1))/$batch_count"
@@ -796,7 +866,7 @@ main() {
       [[ -n "$target" ]] || { warn "Empty target specified. Skipping."; continue; }
       info "Processing: $target ($((processed+1))/${#targets[@]})"
       create_symlink "$target" "$target_dir" || true
-      ((processed++))
+      ((processed+=1))
     done
   fi
 

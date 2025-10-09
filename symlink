@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #shellcheck disable=SC2034,SC1091,SC2155
-# symlink v1.3.7 - Creates symlinks in /usr/local/bin for executable files
+# symlink v1.3.8 - Creates symlinks in /usr/local/bin for executable files
 #
 # Creates symbolic links in /usr/local/bin for executable files, making them
 # accessible system-wide. Features include:
@@ -14,6 +14,7 @@
 #   - Ownership and permissions preservation
 # License: GPL-3.0
 set -euo pipefail
+shopt -s inherit_errexit shift_verbose extglob nullglob
 # Enforce root privileges at the very beginning
 ((EUID)) && {
   sudo -ln &>/dev/null || { >&2 echo "$(basename "$0"): Requires root, or non-interactive sudo privileges."; exit 1; }
@@ -22,13 +23,13 @@ set -euo pipefail
 }
 
 VERSION='1.3.8'
-PRG0=$(readlink -fn -- "$0" 2>/dev/null || readlink -en -- "$0")
-PRG=${PRG0##*/}
-PRGDIR=${PRG0%/*}
+SCRIPT_PATH=$(readlink -en -- "$0")
+SCRIPT_NAME=${SCRIPT_PATH##*/}
+SCRIPT_DIR=${SCRIPT_PATH%/*}
 ORIG_DIR=$(pwd)
 DEFAULT_TARGET_DIR='/usr/local/bin'
 CRITICAL_FILES=(awk bash cat chgrp chmod chown clang cp dash date df du echo file find gcc git grep groupadd groupdel head hostname ifconfig ip kill less login ls make mkdir mount mv netstat passwd ping ps reboot rm rmdir sed sh shutdown ss sudo tail top touch umount useradd userdel vi vim zsh)
-readonly -- VERSION PRG0 PRG PRGDIR ORIG_DIR DEFAULT_TARGET_DIR CRITICAL_FILES
+readonly -- VERSION SCRIPT_PATH SCRIPT_NAME SCRIPT_DIR ORIG_DIR DEFAULT_TARGET_DIR CRITICAL_FILES
 # Initialize key variables early
 declare -i DRY_RUN=0 VERBOSE=0 DEBUG=0
 # Set PROMPT based on whether we're running interactively
@@ -57,7 +58,7 @@ readonly -- RED GREEN YELLOW CYAN NC
 
 # Core message function using FUNCNAME for context
 _msg() {
-  local -- status="${FUNCNAME[1]}" prefix="$PRG:" msg
+  local -- status="${FUNCNAME[1]}" prefix="$SCRIPT_NAME:" msg
   case "$status" in
     success) prefix+=" ${GREEN}✓${NC}" ;;
     warn)    prefix+=" ${YELLOW}⚡${NC}" ;;
@@ -100,8 +101,8 @@ s() { (( ${1:-1} == 1 )) || echo -n 's'; }
 yn() {
   ((PROMPT)) || return 0
   local -- reply
-  read -r -n1 -p "$PRG: ${YELLOW}$1${NC} (y/n) " reply
-  echo
+  >&2 read -r -n 1 -p "$SCRIPT_NAME: ${YELLOW}$1${NC} (y/n) " reply
+  >&2 echo
   [[ ${reply,,} == y ]]
 }
 
@@ -133,7 +134,7 @@ debug "Running as root user: EUID=$EUID"
 usage() {
   local -i exit_code="${1:-0}"
   cat <<EOT
-$PRG $VERSION - Create symlinks in /usr/local/bin for executable files
+$SCRIPT_NAME $VERSION - Create symlinks in /usr/local/bin for executable files
 
 Requires root privileges (automatically uses sudo if needed).
 
@@ -147,40 +148,43 @@ DESCRIPTION:
 
 COMMON USAGE PATTERNS:
   • Link a specific script:
-    $PRG /path/to/my-script.sh
+    $SCRIPT_NAME /path/to/my-script.sh
 
   • Link multiple scripts:
-    $PRG script1.sh script2.sh /path/to/tool3
+    $SCRIPT_NAME script1.sh script2.sh /path/to/tool3
 
   • Scan for .symlink files and process them (admin mode):
-    $PRG -SPd [startpath]
+    $SCRIPT_NAME -SPd [startpath]
     (Scans for .symlink files with no prompts and cleans broken links)
 
 OPERATION MODES:
   1. Direct linking:
-     $PRG [-P] [-d] [-v|-q] [-n] scriptpath [scriptpath...]
+     $SCRIPT_NAME [-P] [-d] [-v|-q] [-n] scriptpath [scriptpath...]
      Links specific executable files to /usr/local/bin.
 
   2. Scan-based linking:
-     $PRG -S [-P] [-d] [-v|-q] [-n] [startpath]
+     $SCRIPT_NAME -S [-P] [-d] [-v|-q] [-n] [startpath]
      Scans for .symlink files and creates links for files listed in them.
      If startpath is omitted, the current directory is used.
      NOTE: Scanning is limited to max depth of $FIND_MAX_DEPTH for safety.
 
   3. List-only mode:
-     $PRG -l [startpath]
+     $SCRIPT_NAME -l [startpath]
      Lists contents of all .symlink files without creating links.
 
 FORMAT OF .SYMLINK FILES:
-  Plain text files containing one executable filename per line.
+  Plain text files containing one executable per line, with optional custom symlink name.
+  • Format: source_path [custom_symlink_name]
+  • If custom_symlink_name is omitted, uses basename of source_path
   • Empty lines and lines starting with # are ignored
   • Each file path should be relative to the .symlink file's location
   • File paths are trimmed of leading/trailing whitespace
   • Example:
       # This is a comment
-      script1
-      tools/script2
-      bin/tool3
+      script1                    # Creates /usr/local/bin/script1
+      tools/script2              # Creates /usr/local/bin/script2
+      bin/tool3                  # Creates /usr/local/bin/tool3
+      spacetime.bash spacetime   # Creates /usr/local/bin/spacetime
 
 OPTIONS:
   -t, --target-dir       Define target dir (default $DEFAULT_TARGET_DIR)
@@ -218,19 +222,19 @@ ENVIRONMENT VARIABLES:
   SYMLINK_FORCE_CRITICAL Set to override safety checks for critical system files
 
 EXAMPLES:
-  $PRG -SPd /my/scripts
+  $SCRIPT_NAME -SPd /my/scripts
     Scans /my/scripts recursively for .symlink files and processes them without prompts.
 
-  $PRG -n ./my-script.sh
+  $SCRIPT_NAME -n ./my-script.sh
     Dry run to show what would happen when creating a symlink for my-script.sh.
 
-  $PRG -l ~/bin
+  $SCRIPT_NAME -l ~/bin
     List all .symlink configurations in the ~/bin directory without creating links.
 
-  $PRG -Sd /opt/tools
+  $SCRIPT_NAME -Sd /opt/tools
     Process all .symlink files in /opt/tools without prompting for confirmation.
 
-  $PRG --debug -nSPd /path/to/scripts
+  $SCRIPT_NAME --debug -nSPd /path/to/scripts
     Perform a dry run with detailed debug logging to a temporary file.
 
 EOT
@@ -264,12 +268,12 @@ is_critical_file() {
 # --------------------------------------------------------------------------------
 # Create a symbolic link (handles errors and critical system files)
 create_symlink() {
-  local -- source_path="$1" target_dir="$2"
+  local -- source_path="$1" target_dir="$2" custom_target_name="${3:-}"
   local -- target_name target_path yn
   local -i exit_code=0
 
-  # Get target filename
-  target_name=$(basename "$source_path")
+  # Get target filename - use custom name if provided, otherwise use basename
+  target_name="${custom_target_name:-$(basename "$source_path")}"
   target_path="${target_dir}/${target_name}"
   debug "create_symlink: $source_path → $target_path"
 
@@ -496,7 +500,7 @@ delete_broken_symlinks() {
 
       # This is a broken symlink
       info "[DRY RUN] Would delete broken symlink: '$link'"
-      ((count++))
+      ((count+=1))
     done
 
     ((count)) && info "[DRY RUN] Would delete $count broken symlinks"
@@ -514,7 +518,7 @@ delete_broken_symlinks() {
     # This is a broken symlink - delete it
     info "Deleting broken symlink: '$link'"
     if rm "$link"; then
-      ((count++))
+      ((count+=1))
     else
       warn "Failed to delete broken symlink: '$link'"
     fi
@@ -620,7 +624,7 @@ main() {
     -h|--help)          usage 0 ;;
     -v|--verbose)       VERBOSE=1 ;;
     -q|--quiet)         VERBOSE=0 ;;
-    -V|--version)       echo "$PRG $VERSION"; exit 0 ;;
+    -V|--version)       echo "$SCRIPT_NAME $VERSION"; exit 0 ;;
     -n|--dry-run)       DRY_RUN=1 ;;
     -D|--debug)         DEBUG=1 ;;
      # Handle combined short options (e.g., -vPd)
@@ -773,7 +777,7 @@ main() {
     debug "Processing in $batch_count batches"
 
     # Process in batches
-    for ((batch=0; batch<batch_count; batch++)); do
+    for ((batch=0; batch<batch_count; batch+=1)); do
       local -i start=$((batch * batch_size))
       local -i end=$(( (batch + 1) * batch_size ))
       (( end > total )) && end=$total
@@ -782,7 +786,7 @@ main() {
       debug "Processing files $((start+1))-$end of $total"
 
       # Process each file in this batch
-      for ((i=start; i<end; i++)); do
+      for ((i=start; i<end; i+=1)); do
         local -- symlink="${symlinks[$i]}"
         info "Processing: $symlink ($((i+1))/$total)"
 
@@ -800,47 +804,52 @@ main() {
           line=$(trim "$line")
           [[ -z "$line" ]] && continue
 
+          # Parse line for source_file and optional custom_name
+          local -- source_file custom_name
+          read -r source_file custom_name <<< "$line"
+
           # Get the full path to the script
-          local -- script_path="$symlink_dir/$line"
+          local -- script_path="$symlink_dir/$source_file"
+          local -- link_name="${custom_name:-$(basename "$source_file")}"
           ((count+=1))
 
           if ((DRY_RUN)); then
             # For dry run, just check if it exists
             if [[ ! -f "$script_path" ]]; then
               error "Source file does not exist: '$script_path'"
-              ERROR_LINKS+=("$script_path → $target_dir/$(basename "$script_path") (not found)")
+              ERROR_LINKS+=("$script_path → $target_dir/$link_name (not found)")
               continue
             fi
 
             if [[ ! -x "$script_path" ]]; then
               error "Source file not executable: '$script_path'"
-              ERROR_LINKS+=("$script_path → $target_dir/$(basename "$script_path") (not executable)")
+              ERROR_LINKS+=("$script_path → $target_dir/$link_name (not executable)")
               continue
             fi
 
-            info "[DRY RUN] Would create symlink: $script_path → $target_dir/$(basename "$script_path")"
-            CREATED_LINKS+=("$script_path → $target_dir/$(basename "$script_path")")
+            info "[DRY RUN] Would create symlink: $script_path → $target_dir/$link_name"
+            CREATED_LINKS+=("$script_path → $target_dir/$link_name")
           else
             # For real operation, create the link
             if [[ ! -f "$script_path" ]]; then
               error "Source file does not exist: '$script_path'"
-              ERROR_LINKS+=("$script_path → $target_dir/$(basename "$script_path") (not found)")
+              ERROR_LINKS+=("$script_path → $target_dir/$link_name (not found)")
               continue
             fi
 
             if [[ ! -x "$script_path" ]]; then
               error "Source file not executable: '$script_path'"
-              ERROR_LINKS+=("$script_path → $target_dir/$(basename "$script_path") (not executable)")
+              ERROR_LINKS+=("$script_path → $target_dir/$link_name (not executable)")
               continue
             fi
 
-            if ln -sf "$(readlink -f "$script_path")" "$target_dir/$(basename "$script_path")"; then
-              info "Created symlink: $script_path → $target_dir/$(basename "$script_path")"
-              change_symlink_owner_perms "$script_path" "$target_dir/$(basename "$script_path")"
-              CREATED_LINKS+=("$script_path → $target_dir/$(basename "$script_path")")
+            if ln -sf "$(readlink -f "$script_path")" "$target_dir/$link_name"; then
+              info "Created symlink: $script_path → $target_dir/$link_name"
+              change_symlink_owner_perms "$script_path" "$target_dir/$link_name"
+              CREATED_LINKS+=("$script_path → $target_dir/$link_name")
             else
-              error "Failed to create symlink: $script_path → $target_dir/$(basename "$script_path")"
-              ERROR_LINKS+=("$script_path → $target_dir/$(basename "$script_path") (link failed)")
+              error "Failed to create symlink: $script_path → $target_dir/$link_name"
+              ERROR_LINKS+=("$script_path → $target_dir/$link_name (link failed)")
             fi
           fi
         done < "$symlink"
@@ -856,7 +865,7 @@ main() {
 
   else
     # Process individual target files
-    (( ${#targets[@]} )) || die 1 "No target files specified. Use $PRG --help for usage information."
+    (( ${#targets[@]} )) || die 1 "No target files specified. Use $SCRIPT_NAME --help for usage information."
 
     info "Processing ${#targets[@]} individual target files"
 

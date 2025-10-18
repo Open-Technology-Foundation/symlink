@@ -22,20 +22,20 @@ shopt -s inherit_errexit shift_verbose extglob nullglob
   exit $?
 }
 
-VERSION='1.3.8'
-SCRIPT_PATH=$(readlink -en -- "$0")
+declare -- VERSION SCRIPT_PATH SCRIPT_NAME SCRIPT_DIR ORIG_DIR DEFAULT_TARGET_DIR CRITICAL_FILES
+VERSION='1.4.0'
+SCRIPT_PATH=$(realpath -- "$0")
 SCRIPT_NAME=${SCRIPT_PATH##*/}
 SCRIPT_DIR=${SCRIPT_PATH%/*}
 ORIG_DIR=$(pwd)
 DEFAULT_TARGET_DIR='/usr/local/bin'
 CRITICAL_FILES=(awk bash cat chgrp chmod chown clang cp dash date df du echo file find gcc git grep groupadd groupdel head hostname ifconfig ip kill less login ls make mkdir mount mv netstat passwd ping ps reboot rm rmdir sed sh shutdown ss sudo tail top touch umount useradd userdel vi vim zsh)
-readonly -- VERSION SCRIPT_PATH SCRIPT_NAME SCRIPT_DIR ORIG_DIR DEFAULT_TARGET_DIR CRITICAL_FILES
 # Initialize key variables early
-declare -i DRY_RUN=0 VERBOSE=0 DEBUG=0
+declare -i DRY_RUN=0 VERBOSE=0 DEBUG=0 PROMPT=0
 # Set PROMPT based on whether we're running interactively
 # If stdin is not a terminal, disable prompting by default
-declare -i PROMPT=0  # Non-interactive - no prompting by default
-[[ -t 0 ]] && PROMPT=1  # Interactive - prompting enabled by default
+# PROMPT=0  Non-interactive - no prompting by default
+[[ -t 0 ]] && PROMPT=1 || :  # Interactive - prompting enabled by default
 
 declare -i SCANSYMLINK=0
 declare -i DELETE_DEAD_SYMLINKS=0
@@ -54,7 +54,6 @@ if [[ -t 2 ]]; then
 else
   declare -- RED='' GREEN='' YELLOW='' CYAN='' NC=''
 fi
-readonly -- RED GREEN YELLOW CYAN NC
 
 # Core message function using FUNCNAME for context
 _msg() {
@@ -79,16 +78,25 @@ debug() { ((DEBUG)) || return 0; >&2 _msg "$@"; }
 # Unconditional output
 error() { >&2 _msg "$@"; }
 die() { (($# > 1)) && error "${@:2}"; exit "${1:-0}"; }
+# yes/no prompt
+yn() {
+  ((PROMPT)) || return 0
+  local -- reply
+  >&2 read -r -n 1 -p "$(warn "$1 (y/n) ")" reply
+#  >&2 read -r -n 1 -p "$SCRIPT_NAME: ${YELLOW}$1${NC} (y/n) " reply
+  >&2 echo
+  [[ ${reply,,} == y ]]
+}
 
 # --------------------------------------------------------------------------------
 # Utility functions
 # --------------------------------------------------------------------------------
 # Validate argument presence
 noarg() {
-  if (($# < 2)) || [[ ${2:0:1} == '-' ]]; then
-    die 2 "Missing argument for option '$1'"
-  fi
-  true
+  (($# > 1)) && [[ ${2:0:1} != '-' ]] || die 2 "Missing argument for option ${1@Q}"
+#  if (($# < 2)) || [[ ${2:0:1} == '-' ]]; then
+#    die 2 "Missing argument for option ${1@Q}"
+#  fi
 }
 
 # Display declared variables for debugging
@@ -97,20 +105,12 @@ decp() { declare -p "$@" | sed 's/^declare -[a-zA-Z-]* //'; }
 # Pluralization helper
 s() { (( ${1:-1} == 1 )) || echo -n 's'; }
 
-# yes/no prompt
-yn() {
-  ((PROMPT)) || return 0
-  local -- reply
-  >&2 read -r -n 1 -p "$SCRIPT_NAME: ${YELLOW}$1${NC} (y/n) " reply
-  >&2 echo
-  [[ ${reply,,} == y ]]
-}
 
 # --------------------------------------------------------------------------------
 # Pre-Check DEBUG flag
 # --------------------------------------------------------------------------------
 # Enable debug mode if requested through environment variable or command line flag
-[[ -n "${SYMLINK_DEBUG:-}" ]] && DEBUG=1
+[[ -z "${SYMLINK_DEBUG:-}" ]] || DEBUG=1
 if (($#)); then
   for arg in "$@"; do [[ "$arg" == "--debug" ]] && { DEBUG=1; break; }; done
 fi
@@ -282,7 +282,7 @@ create_symlink() {
     error "Source file does not exist: '$source_path'"
     ERROR_LINKS+=("$source_path → $target_path (source not found)")
     if ((DRY_RUN)); then
-      info "[DRY RUN] Would fail: Source file not found: '$source_path'"
+      info "[DRY RUN] Would fail: Source file not found ${source_path@Q}"
       return 0
     fi
     return 3
@@ -292,7 +292,7 @@ create_symlink() {
     error "Source file is not executable: '$source_path'"
     ERROR_LINKS+=("$source_path → $target_path (not executable)")
     if ((DRY_RUN)); then
-      info "[DRY RUN] Would fail: Source file not executable: '$source_path'"
+      info "[DRY RUN] Would fail: Source file not executable ${source_path@Q}"
       return 0
     fi
     return 1
@@ -313,17 +313,17 @@ create_symlink() {
     error "Target directory does not exist: '$target_dir'"
     ERROR_LINKS+=("$source_path → $target_path (target dir not found)")
     if ((DRY_RUN)); then
-      info "[DRY RUN] Would fail: Target directory does not exist: '$target_dir'"
+      info "[DRY RUN] Would fail: Target directory does not exist ${target_dir@Q}"
       return 0
     fi
     return 3
   fi
 
   if [[ ! -w "$target_dir" ]]; then
-    error "No write permission on target directory: '$target_dir'"
+  error "No write permission on target directory ${target_dir@Q}"
     ERROR_LINKS+=("$source_path → $target_path (permission denied)")
     if ((DRY_RUN)); then
-      info "[DRY RUN] Would fail: No write permission on target directory: '$target_dir'"
+      info "[DRY RUN] Would fail: No write permission on target directory ${target_dir@Q}"
       return 0
     fi
     return 2
@@ -331,7 +331,7 @@ create_symlink() {
 
   # Check for critical system files
   if is_critical_file "$target_name"; then
-    warn "WARNING: '$target_name' appears to be a critical system file!"
+    warn "${target_name@Q} appears to be a critical system file!"
 
     # In non-interactive or dry-run mode, handle specially
     if ((DRY_RUN)); then
@@ -343,7 +343,7 @@ create_symlink() {
     # Always prompt for critical files, unless explicitly overridden with environment variable
     if ((PROMPT)) || [[ -z "${SYMLINK_FORCE_CRITICAL:-}" ]]; then
       if ! yn "Are you ABSOLUTELY SURE you want to replace it?"; then
-        info "Skipping '$target_name' (critical system file)"
+        info "Skipping ${target_name@Q} (critical system file)"
         SKIPPED_LINKS+=("$source_path → $target_path (critical file)")
         return 0
       fi
@@ -353,9 +353,9 @@ create_symlink() {
       # but for critical files we should skip by default for safety
       # unless overridden with SYMLINK_FORCE_CRITICAL
       if [[ -n "${SYMLINK_FORCE_CRITICAL:-}" ]]; then
-        warn "CRITICAL FILE REPLACED: '$target_name' (non-interactive mode with SYMLINK_FORCE_CRITICAL)"
+        warn "CRITICAL FILE REPLACED: ${target_name@Q}' (non-interactive mode with SYMLINK_FORCE_CRITICAL)"
       else
-        info "Skipping '$target_name' (critical system file in non-interactive mode)"
+        info "Skipping ${target_name@Q} (critical system file in non-interactive mode)"
         SKIPPED_LINKS+=("$source_path → $target_path (critical file in non-interactive mode)")
         return 0
       fi
@@ -387,7 +387,7 @@ create_symlink() {
 
   # Handle existing symlink
   if [[ -L "$target_path" ]]; then
-    info "Symlink exists: '$target_path'"
+    info "Symlink exists ${target_path@Q}"
 
     change_symlink_owner_perms "$source_abs_path" "$target_path"
 
@@ -395,23 +395,23 @@ create_symlink() {
     local -- current_target
     current_target=$(readlink -f -- "$target_path" 2>/dev/null || readlink -en -- "$target_path")
     if [[ "$current_target" == "$source_abs_path" ]]; then
-      info "Symlink already points to '$source_abs_path', skipping"
+      info "Symlink already points to ${source_abs_path@Q}, skipping"
       SKIPPED_LINKS+=("$source_path → $target_path (already exists)")
       return 0
     fi
 
     if ((PROMPT)); then
       if ! yn "Remove existing symlink?"; then
-        info "Skipping '$target_name'"
+        info "Skipping ${target_name@Q}"
         SKIPPED_LINKS+=("$source_path → $target_path (user skipped)")
         return 0
       fi
     else
-      info "Removing existing symlink: '$target_path'"
+      info "Removing existing symlink ${target_path@Q}"
     fi
 
     if ! rm "$target_path"; then
-      error "Failed to remove existing symlink: '$target_path'"
+      error "Failed to remove existing symlink ${target_path@Q}"
       ERROR_LINKS+=("$source_path → $target_path (remove failed)")
       return 1
     fi
@@ -420,19 +420,19 @@ create_symlink() {
 
   # Handle existing regular file
   if [[ -e "$target_path" ]]; then
-    info "File exists: '$target_path'"
+    info "File exists ${target_path@Q}"
     if ((PROMPT)); then
       if ! yn "Remove existing file?"; then
-        info "Skipping '$target_name'"
+        info "Skipping ${target_name@Q}"
         SKIPPED_LINKS+=("$source_path → $target_path (user skipped)")
         return 0
       fi
     else
-      info "Removing existing file: '$target_path'"
+      info "Removing existing file ${target_path@Q}"
     fi
 
     if ! rm "$target_path"; then
-      error "Failed to remove existing file: '$target_path'"
+      error "Failed to remove existing file ${target_path@Q}"
       ERROR_LINKS+=("$source_path → $target_path (remove failed)")
       return 1
     fi
@@ -442,18 +442,18 @@ create_symlink() {
   # Create the symbolic link
   info "Creating symlink: '$source_abs_path' → '$target_path'"
   if ! ln -s "$source_abs_path" "$target_path"; then
-    error "Failed to create symlink: '$target_path'"
+    error "Failed to create symlink ${target_path@Q}"
     ERROR_LINKS+=("$source_path → $target_path (link failed)")
     return 1
   fi
 
   CREATED_LINKS+=("$source_path → $target_path")
-  success "Created symlink: '$target_name'"
+  success "Created symlink ${target_name@Q}"
 
   change_symlink_owner_perms "$source_abs_path" "$target_path"
 
   # Show details of the created symlink if verbose
-  ((VERBOSE)) && { ls -lsd "$target_path" 2>/dev/null || true; }
+  ((VERBOSE)) && { ls -lsd "$target_path" 2>/dev/null || :; }
 
   return 0
 }
@@ -485,7 +485,7 @@ delete_broken_symlinks() {
   local -i count=0
   local -a broken_links=()
 
-  info "Finding broken symlinks in '$target_dir'"
+  info "Finding broken symlinks in ${target_dir@Q}"
 
   if ((DRY_RUN)); then
     debug "Checking for broken symlinks in dry-run mode (safe approach)"
@@ -496,11 +496,11 @@ delete_broken_symlinks() {
       [[ -L "$link" ]] || continue
 
       # Check if it's broken - target doesn't exist
-      [[ -e "$link" ]] && continue
+      [[ -e "$link" ]] && continue || :
 
       # This is a broken symlink
-      info "[DRY RUN] Would delete broken symlink: '$link'"
-      ((count+=1))
+      info "[DRY RUN] Would delete broken symlink ${link@Q}"
+      count+=1
     done
 
     ((count)) && info "[DRY RUN] Would delete $count broken symlinks"
@@ -514,19 +514,19 @@ delete_broken_symlinks() {
     # Skip if it's not a symlink
     [[ -L "$link" ]] || continue
     # Skip if the symlink target exists (i.e., not broken)
-    [[ -e "$link" ]] && continue
+    [[ -e "$link" ]] && continue || :
     # This is a broken symlink - delete it
-    info "Deleting broken symlink: '$link'"
+    info "Deleting broken symlink ${link@Q}"
     if rm "$link"; then
-      ((count+=1))
+      count+=1
     else
-      warn "Failed to delete broken symlink: '$link'"
+      warn "Failed to delete broken symlink ${link@Q}"
     fi
   done
 
   ((count)) && success "Deleted $count broken symlinks"
 
-  debug "delete_broken_symlinks completed successfully"
+  debug 'delete_broken_symlinks completed successfully'
   return 0
 }
 
@@ -544,7 +544,7 @@ print_summary() {
       echo "[DRY RUN] No operations would be performed."
       return 0
     fi
-    echo "<DRY RUN>"
+    echo '<DRY RUN>'
   else
     if (( ${#CREATED_LINKS[@]} == 0 && ${#REPLACED_LINKS[@]} == 0 &&
           ${#SKIPPED_LINKS[@]} == 0 && ${#ERROR_LINKS[@]} == 0 )); then
@@ -632,7 +632,7 @@ main() {
                         set -- '' $(printf -- "-%c " $(grep -o . <<<"${1:1}")) "${@:2}"
                         ;;
     # Error handling
-    -*)                 die 22 "Invalid option '$1'" ;;
+    -*)                 die 22 "Invalid option ${1@Q}" ;;
     # Collect non-option arguments as target files/paths
     *)                  targets+=("$1") ;;
   esac; shift; done
@@ -642,9 +642,9 @@ main() {
   # Only check target dir if not in dry-run mode
   if ((DRY_RUN == 0)); then
     # Check if target directory exists and is writable
-    [[ ! -d "$target_dir" ]] && die 3 "Target directory does not exist: '$target_dir'"
+    [[ ! -d "$target_dir" ]] && die 3 "Target directory does not exist ${target_dir@Q}"
 
-    [[ ! -w "$target_dir" ]] && die 2 "No write permission on target directory: '$target_dir'"
+    [[ ! -w "$target_dir" ]] && die 2 "No write permission on target directory ${target_dir@Q}"
   fi
 
   # Process .symlink files if -l or -S options were used
@@ -666,25 +666,27 @@ main() {
     fi
 
     # Validate the startpath - use more robust path resolution
-    info "Resolving path: '$startpath'"
+    info "Resolving path ${startpath@Q}"
 
     # Add timeout to readlink command to prevent hanging
-    if ! startpath=$(timeout 2 readlink -f -- "$startpath" 2>/dev/null || timeout 2 readlink -en -- "$startpath" 2>/dev/null); then
-      die 1 "Failed to resolve path (timeout or error)"
-    fi
+    startpath=$(
+        realpath -- "$startpath" 2>/dev/null || echo ''
+      )
+
+    [[ -n $startpath ]] || die 1 "Failed to resolve path ${startpath@Q} (timeout or error)"
 
     [[ -z "$startpath" ]] && die 1 "Failed to resolve path: empty result"
 
-    info "Resolved path: '$startpath'"
-    [[ -d "$startpath" ]] || die 3 "Path is not a directory: '$startpath'"
+    info "Resolved path ${startpath@Q}"
+    [[ -d "$startpath" ]] || die 3 "Path is not a directory ${startpath@Q}"
 
     # Ensure the path exists and is accessible
-    [[ -x "$startpath" ]] || die 2 "Path exists but is not accessible: '$startpath'"
+    [[ -x "$startpath" ]] || die 2 "Path exists but is not accessible ${startpath@Q}"
 
     # Handle the -l (list) option - just show contents of .symlink files
     if ((LISTIT)); then
       info "Listing contents of all .symlink files"
-      info "  starting in '$startpath'"
+      info "  starting in ${startpath@Q}"
 
       local -a symlink_files=()
       local -- symlink
@@ -698,7 +700,7 @@ main() {
         if [[ -f "$startpath/.symlink" ]]; then
           symlink_files=("$startpath/.symlink")
         else
-          warn "No .symlink files found in '$startpath'"
+          warn "No .symlink files found in ${startpath@Q}"
           exit 50
         fi
       else
@@ -712,7 +714,7 @@ main() {
         fi
 
         (( ${#symlink_files[@]})) \
-            || die 50 "No .symlink files found in '$startpath'"
+            || die 50 "No .symlink files found in ${startpath@Q}"
       fi
 
       debug "Found ${#symlink_files[@]} .symlink files for listing"
@@ -728,16 +730,16 @@ main() {
     fi
 
     # Handle the -S (scan) option - process .symlink files
-    info "Scanning for all .symlink files starting in '$startpath'"
+    info "Scanning for all .symlink files starting in ${startpath@Q}"
     local -a symlinks=()
     local -- symlink
 
     # Safety first: Use controlled approach to avoid recursion issues
     startpath="${startpath%/}"  # Remove trailing slash if present
-    debug "Start path for symlink scan: '$startpath'"
+    debug "Start path for symlink scan ${startpath@Q}"
 
     if [[ ! -d "$startpath" ]] || [[ ! -r "$startpath" ]]; then
-      die 3 "Cannot access directory: '$startpath'"
+      die 3 "Cannot access directory ${startpath@Q}"
     fi
 
     # First check if the startpath is actually /usr/local/bin or contains it
@@ -745,7 +747,7 @@ main() {
       # We're scanning in or below the target directory, which is dangerous
       warn "Scanning in target directory ($DEFAULT_TARGET_DIR) is not recommended"
       # To be extra safe, we just find the direct .symlink file
-      [[ -f "$startpath/.symlink" ]] || die 50 "No .symlink files found in '$startpath'"
+      [[ -f "$startpath/.symlink" ]] || die 50 "No .symlink files found in ${startpath@Q}"
       symlinks=("$startpath/.symlink")
     else
       # For standard directories, do a limited depth search
@@ -756,7 +758,7 @@ main() {
           ) \
         ||  die 1 "Error finding .symlink files"
 
-      (( ${#symlinks[@]} )) || die 50 "No .symlink files found in '$startpath'"
+      (( ${#symlinks[@]} )) || die 50 "No .symlink files found in ${startpath@Q}"
     fi
 
     debug "Found ${#symlinks[@]} .symlink files to process"

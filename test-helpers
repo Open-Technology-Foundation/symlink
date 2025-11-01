@@ -1,0 +1,421 @@
+#!/usr/bin/env bash
+# test-helpers - Utility functions for symlink testing
+# Version: 1.0.0
+# License: GPL-3.0
+
+# This file should be sourced, not executed
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  echo "Error: This file should be sourced, not executed directly"
+  exit 1
+fi
+
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Test Environment Variables
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Test directory structure
+TEST_ROOT=""
+TEST_SOURCE_DIR=""
+TEST_TARGET_DIR=""
+TEST_WORK_DIR=""
+
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Environment Setup/Teardown
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Set up test environment
+# Creates isolated directory structure for testing
+# Arguments: none
+# Sets: TEST_ROOT, TEST_SOURCE_DIR, TEST_TARGET_DIR, TEST_WORK_DIR
+setup_test_env() {
+  # Create unique test root
+  TEST_ROOT="$(mktemp -d -t symlink-test-XXXXXX)"
+
+  # Create directory structure
+  TEST_SOURCE_DIR="${TEST_ROOT}/source"
+  TEST_TARGET_DIR="${TEST_ROOT}/target"
+  TEST_WORK_DIR="${TEST_ROOT}/work"
+
+  mkdir -p "${TEST_SOURCE_DIR}"
+  mkdir -p "${TEST_TARGET_DIR}"
+  mkdir -p "${TEST_WORK_DIR}"
+
+  # Ensure cleanup on test failure
+  trap cleanup_test_env EXIT
+}
+
+# Clean up test environment
+# Removes all test artifacts
+# Arguments: none
+cleanup_test_env() {
+  if [[ -n "${TEST_ROOT}" && -d "${TEST_ROOT}" ]]; then
+    rm -rf "${TEST_ROOT}"
+  fi
+
+  # Clear variables
+  TEST_ROOT=""
+  TEST_SOURCE_DIR=""
+  TEST_TARGET_DIR=""
+  TEST_WORK_DIR=""
+}
+
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Mock File Creation
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Create a mock executable file
+# Arguments: $1=file_path, $2=optional content
+# Returns: 0 on success
+create_mock_executable() {
+  local -r file_path="${1}"
+  local -r content="${2:-#!/usr/bin/env bash\necho 'mock executable'\n}"
+
+  echo -e "${content}" > "${file_path}"
+  chmod +x "${file_path}"
+}
+
+# Create a mock non-executable file
+# Arguments: $1=file_path, $2=optional content
+# Returns: 0 on success
+create_mock_file() {
+  local -r file_path="${1}"
+  local -r content="${2:-mock file content\n}"
+
+  echo -e "${content}" > "${file_path}"
+  chmod 644 "${file_path}"
+}
+
+# Create a mock symlink
+# Arguments: $1=link_path, $2=target_path
+# Returns: 0 on success
+create_mock_symlink() {
+  local -r link_path="${1}"
+  local -r target_path="${2}"
+
+  ln -sf "${target_path}" "${link_path}"
+}
+
+# Create a broken symlink
+# Arguments: $1=link_path
+# Returns: 0 on success
+create_broken_symlink() {
+  local -r link_path="${1}"
+  local -r nonexistent_target="${TEST_ROOT}/nonexistent-target-$$"
+
+  ln -sf "${nonexistent_target}" "${link_path}"
+}
+
+# Create a directory
+# Arguments: $1=dir_path
+# Returns: 0 on success
+create_mock_directory() {
+  local -r dir_path="${1}"
+
+  mkdir -p "${dir_path}"
+}
+
+# Create a file with specific permissions
+# Arguments: $1=file_path, $2=permissions (octal)
+# Returns: 0 on success
+create_mock_file_with_perms() {
+  local -r file_path="${1}"
+  local -r perms="${2}"
+
+  touch "${file_path}"
+  chmod "${perms}" "${file_path}"
+}
+
+# Create a file owned by specific user
+# Arguments: $1=file_path, $2=owner, $3=optional group
+# Returns: 0 on success
+create_mock_file_with_owner() {
+  local -r file_path="${1}"
+  local -r owner="${2}"
+  local -r group="${3:-${owner}}"
+
+  touch "${file_path}"
+
+  # Only attempt chown if running as root
+  if ((EUID == 0)); then
+    chown "${owner}:${group}" "${file_path}"
+  fi
+}
+
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# .symlink File Creation
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Create a .symlink file with entries
+# Arguments: $1=symlink_file_path, $@=entries (one per argument)
+# Returns: 0 on success
+create_symlink_file() {
+  local -r symlink_file="${1}"
+  shift
+
+  {
+    echo "# Auto-generated test .symlink file"
+    for entry in "$@"; do
+      echo "${entry}"
+    done
+  } > "${symlink_file}"
+}
+
+# Create a .symlink file with comments and blank lines
+# Arguments: $1=symlink_file_path
+# Returns: 0 on success
+create_complex_symlink_file() {
+  local -r symlink_file="${1}"
+
+  cat > "${symlink_file}" <<'EOF'
+# This is a comment
+script1.sh
+
+# Another comment
+script2.sh custom-name
+
+# Empty lines below
+
+script3.sh
+
+EOF
+}
+
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Custom Assertions for Symlink Testing
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Assert that symlink was created in target directory
+# Arguments: $1=link_name
+# Returns: 0 if assertion passes, 1 otherwise
+assert_symlink_created() {
+  local -r link_name="${1}"
+  local -r link_path="${TEST_TARGET_DIR}/${link_name}"
+
+  if [[ ! -L "${link_path}" ]]; then
+    fail "Symlink was not created: ${link_path}"
+    return 1
+  fi
+  return 0
+}
+
+# Assert that symlink points to source file
+# Arguments: $1=link_name, $2=source_file
+# Returns: 0 if assertion passes, 1 otherwise
+assert_symlink_points_to() {
+  local -r link_name="${1}"
+  local -r source_file="${2}"
+  local -r link_path="${TEST_TARGET_DIR}/${link_name}"
+  local actual_target
+
+  if [[ ! -L "${link_path}" ]]; then
+    fail "Not a symlink: ${link_path}"
+    return 1
+  fi
+
+  actual_target="$(readlink -f "${link_path}")"
+
+  if [[ "${actual_target}" != "${source_file}" ]]; then
+    fail "Symlink points to '${actual_target}', expected '${source_file}'"
+    return 1
+  fi
+  return 0
+}
+
+# Assert symlink count in directory
+# Arguments: $1=directory, $2=expected_count
+# Returns: 0 if assertion passes, 1 otherwise
+assert_symlink_count() {
+  local -r directory="${1}"
+  local -ri expected_count="${2}"
+  local -i actual_count=0
+
+  # Count symlinks
+  while IFS= read -r -d '' file; do
+    if [[ -L "${file}" ]]; then
+      ((actual_count += 1))
+    fi
+  done < <(find "${directory}" -maxdepth 1 -type l -print0 2>/dev/null)
+
+  if ((actual_count != expected_count)); then
+    fail "Expected ${expected_count} symlinks, found ${actual_count}"
+    return 1
+  fi
+  return 0
+}
+
+# Assert broken symlink exists
+# Arguments: $1=symlink_path
+# Returns: 0 if assertion passes, 1 otherwise
+assert_broken_symlink() {
+  local -r symlink_path="${1}"
+
+  if [[ ! -L "${symlink_path}" ]]; then
+    fail "Not a symlink: ${symlink_path}"
+    return 1
+  fi
+
+  if [[ -e "${symlink_path}" ]]; then
+    fail "Symlink is not broken: ${symlink_path}"
+    return 1
+  fi
+
+  return 0
+}
+
+# Assert file owner matches
+# Arguments: $1=file_path, $2=expected_owner
+# Returns: 0 if assertion passes, 1 otherwise
+assert_file_owner() {
+  local -r file_path="${1}"
+  local -r expected_owner="${2}"
+  local actual_owner
+
+  actual_owner="$(stat -c '%U' "${file_path}" 2>/dev/null)"
+
+  if [[ "${actual_owner}" != "${expected_owner}" ]]; then
+    fail "File owner is '${actual_owner}', expected '${expected_owner}'"
+    return 1
+  fi
+  return 0
+}
+
+# Assert file permissions match
+# Arguments: $1=file_path, $2=expected_perms (e.g., "755")
+# Returns: 0 if assertion passes, 1 otherwise
+assert_file_perms() {
+  local -r file_path="${1}"
+  local -r expected_perms="${2}"
+  local actual_perms
+
+  actual_perms="$(stat -c '%a' "${file_path}" 2>/dev/null)"
+
+  if [[ "${actual_perms}" != "${expected_perms}" ]]; then
+    fail "File permissions are '${actual_perms}', expected '${expected_perms}'"
+    return 1
+  fi
+  return 0
+}
+
+# Assert output contains text
+# Arguments: $1=command, $2=expected_text
+# Returns: 0 if assertion passes, 1 otherwise
+assert_output_contains() {
+  local -r expected_text="${1}"
+
+  if [[ ! "${TEST_OUTPUT}" =~ ${expected_text} ]]; then
+    fail "Output does not contain '${expected_text}'"
+    fail "Output was: ${TEST_OUTPUT}"
+    return 1
+  fi
+  return 0
+}
+
+# Assert output does not contain text
+# Arguments: $1=unexpected_text
+# Returns: 0 if assertion passes, 1 otherwise
+assert_output_not_contains() {
+  local -r unexpected_text="${1}"
+
+  if [[ "${TEST_OUTPUT}" =~ ${unexpected_text} ]]; then
+    fail "Output contains unexpected text '${unexpected_text}'"
+    fail "Output was: ${TEST_OUTPUT}"
+    return 1
+  fi
+  return 0
+}
+
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Command Execution Helpers
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Run symlink command and capture output
+# Arguments: $@=command arguments
+# Sets: TEST_OUTPUT, TEST_EXIT_CODE
+# Returns: exit code of command
+run_symlink() {
+  local -i exit_code=0
+
+  TEST_OUTPUT="$("${SYMLINK_BIN}" "$@" 2>&1)" || exit_code=$?
+  TEST_EXIT_CODE=${exit_code}
+
+  return ${exit_code}
+}
+
+# Run symlink command with sudo
+# Arguments: $@=command arguments
+# Sets: TEST_OUTPUT, TEST_EXIT_CODE
+# Returns: exit code of command
+run_symlink_sudo() {
+  local -i exit_code=0
+
+  TEST_OUTPUT="$(sudo -E "${SYMLINK_BIN}" "$@" 2>&1)" || exit_code=$?
+  TEST_EXIT_CODE=${exit_code}
+
+  return ${exit_code}
+}
+
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Utility Functions
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Get the absolute path to symlink binary
+# Returns: absolute path to symlink script
+get_symlink_path() {
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  echo "${script_dir}/symlink"
+}
+
+# Check if running as root
+# Returns: 0 if root, 1 otherwise
+is_root() {
+  ((EUID == 0))
+}
+
+# Check if sudo is available
+# Returns: 0 if available, 1 otherwise
+has_sudo() {
+  sudo -n true 2>/dev/null
+}
+
+# Count files in directory
+# Arguments: $1=directory
+# Returns: count via stdout
+count_files() {
+  local -r directory="${1}"
+  local -i count=0
+
+  while IFS= read -r -d '' file; do
+    ((count += 1))
+  done < <(find "${directory}" -maxdepth 1 -type f -print0 2>/dev/null)
+
+  echo "${count}"
+}
+
+# Create nested directory structure
+# Arguments: $1=base_dir, $2=depth
+# Returns: 0 on success
+create_nested_dirs() {
+  local -r base_dir="${1}"
+  local -ri depth="${2}"
+  local -i i=0
+  local current_dir="${base_dir}"
+
+  for ((i = 0; i < depth; i += 1)); do
+    current_dir="${current_dir}/level${i}"
+    mkdir -p "${current_dir}"
+  done
+}
+
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Initialization
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Set symlink binary path
+SYMLINK_BIN="$(get_symlink_path)"
+
+# Variables for capturing command output
+TEST_OUTPUT=""
+TEST_EXIT_CODE=0
+
+#fin

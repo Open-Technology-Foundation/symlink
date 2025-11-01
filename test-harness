@@ -1,0 +1,510 @@
+#!/usr/bin/env bash
+# test-harness - BCS-compliant test framework for Bash scripts
+# Version: 1.0.0
+# License: GPL-3.0
+
+set -euo pipefail
+
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Constants
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+readonly VERSION='1.0.0'
+readonly HARNESS_NAME='test-harness'
+
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Global State
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Test registry
+declare -a TEST_NAMES=()
+declare -a TEST_FUNCTIONS=()
+
+# Test results
+declare -i TESTS_RUN=0
+declare -i TESTS_PASSED=0
+declare -i TESTS_FAILED=0
+declare -i TESTS_SKIPPED=0
+
+# Current test state
+CURRENT_TEST=""
+CURRENT_TEST_FAILED=0
+
+# Test output capture
+declare -a FAILED_TESTS=()
+declare -a FAILED_MESSAGES=()
+
+# Color support
+if [[ -t 1 ]]; then
+  readonly COLOR_RESET='\033[0m'
+  readonly COLOR_RED='\033[0;31m'
+  readonly COLOR_GREEN='\033[0;32m'
+  readonly COLOR_YELLOW='\033[0;33m'
+  readonly COLOR_BLUE='\033[0;34m'
+  readonly COLOR_CYAN='\033[0;36m'
+  readonly COLOR_BOLD='\033[1m'
+else
+  readonly COLOR_RESET=''
+  readonly COLOR_RED=''
+  readonly COLOR_GREEN=''
+  readonly COLOR_YELLOW=''
+  readonly COLOR_BLUE=''
+  readonly COLOR_CYAN=''
+  readonly COLOR_BOLD=''
+fi
+
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Utility Functions
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Print colored message
+# Arguments: $1=color, $2=message
+print_color() {
+  local -r color="${1}"
+  local -r message="${2}"
+  echo -e "${color}${message}${COLOR_RESET}"
+}
+
+# Print error message
+# Arguments: $@=message parts
+error() {
+  print_color "${COLOR_RED}" "✗ $*"
+}
+
+# Print success message
+# Arguments: $@=message parts
+success() {
+  print_color "${COLOR_GREEN}" "✓ $*"
+}
+
+# Print info message
+# Arguments: $@=message parts
+info() {
+  print_color "${COLOR_CYAN}" "◉ $*"
+}
+
+# Print warning message
+# Arguments: $@=message parts
+warn() {
+  print_color "${COLOR_YELLOW}" "▲ $*"
+}
+
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Test Registration
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Register a test
+# Arguments: $1=test_name, $2=test_function
+test() {
+  local -r test_name="${1}"
+  local -r test_function="${2}"
+
+  TEST_NAMES+=("${test_name}")
+  TEST_FUNCTIONS+=("${test_function}")
+}
+
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Assertion Functions
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Mark current test as failed
+# Arguments: $@=failure message
+fail() {
+  local -r message="$*"
+  CURRENT_TEST_FAILED=1
+  print_color "${COLOR_RED}" "  FAIL: ${message}"
+}
+
+# Assert that two values are equal
+# Arguments: $1=expected, $2=actual, $3=optional message
+assert_equals() {
+  local -r expected="${1}"
+  local -r actual="${2}"
+  local -r message="${3:-Expected '${expected}', got '${actual}'}"
+
+  if [[ "${actual}" != "${expected}" ]]; then
+    fail "${message}"
+    return 1
+  fi
+  return 0
+}
+
+# Assert that a value is not equal to another
+# Arguments: $1=not_expected, $2=actual, $3=optional message
+assert_not_equals() {
+  local -r not_expected="${1}"
+  local -r actual="${2}"
+  local -r message="${3:-Expected not '${not_expected}', but got it}"
+
+  if [[ "${actual}" == "${not_expected}" ]]; then
+    fail "${message}"
+    return 1
+  fi
+  return 0
+}
+
+# Assert that a command succeeds (exit code 0)
+# Arguments: $@=command to run
+assert_success() {
+  local -i exit_code=0
+  "$@" &>/dev/null || exit_code=$?
+
+  if ((exit_code != 0)); then
+    fail "Command failed with exit code ${exit_code}: $*"
+    return 1
+  fi
+  return 0
+}
+
+# Assert that a command fails (non-zero exit code)
+# Arguments: $@=command to run
+assert_failure() {
+  local -i exit_code=0
+  "$@" &>/dev/null || exit_code=$?
+
+  if ((exit_code == 0)); then
+    fail "Command succeeded but should have failed: $*"
+    return 1
+  fi
+  return 0
+}
+
+# Assert that a command exits with specific code
+# Arguments: $1=expected_code, $2-@=command to run
+assert_exit_code() {
+  local -ri expected_code="${1}"
+  shift
+  local -i exit_code=0
+  "$@" &>/dev/null || exit_code=$?
+
+  if ((exit_code != expected_code)); then
+    fail "Expected exit code ${expected_code}, got ${exit_code}: $*"
+    return 1
+  fi
+  return 0
+}
+
+# Assert that a file exists
+# Arguments: $1=file_path, $2=optional message
+assert_file_exists() {
+  local -r file_path="${1}"
+  local -r message="${2:-File does not exist: ${file_path}}"
+
+  if [[ ! -e "${file_path}" ]]; then
+    fail "${message}"
+    return 1
+  fi
+  return 0
+}
+
+# Assert that a file does not exist
+# Arguments: $1=file_path, $2=optional message
+assert_file_not_exists() {
+  local -r file_path="${1}"
+  local -r message="${2:-File exists but should not: ${file_path}}"
+
+  if [[ -e "${file_path}" ]]; then
+    fail "${message}"
+    return 1
+  fi
+  return 0
+}
+
+# Assert that a path is a symlink
+# Arguments: $1=path, $2=optional message
+assert_symlink() {
+  local -r path="${1}"
+  local -r message="${2:-Not a symlink: ${path}}"
+
+  if [[ ! -L "${path}" ]]; then
+    fail "${message}"
+    return 1
+  fi
+  return 0
+}
+
+# Assert that a symlink points to a specific target
+# Arguments: $1=symlink_path, $2=expected_target, $3=optional message
+assert_symlink_to() {
+  local -r symlink_path="${1}"
+  local -r expected_target="${2}"
+  local actual_target
+  local -r message="${3:-Symlink does not point to expected target}"
+
+  if [[ ! -L "${symlink_path}" ]]; then
+    fail "Not a symlink: ${symlink_path}"
+    return 1
+  fi
+
+  actual_target="$(readlink -f "${symlink_path}")"
+
+  if [[ "${actual_target}" != "${expected_target}" ]]; then
+    fail "${message}: expected '${expected_target}', got '${actual_target}'"
+    return 1
+  fi
+  return 0
+}
+
+# Assert that a file is executable
+# Arguments: $1=file_path, $2=optional message
+assert_executable() {
+  local -r file_path="${1}"
+  local -r message="${2:-File is not executable: ${file_path}}"
+
+  if [[ ! -x "${file_path}" ]]; then
+    fail "${message}"
+    return 1
+  fi
+  return 0
+}
+
+# Assert that a string contains a substring
+# Arguments: $1=string, $2=substring, $3=optional message
+assert_contains() {
+  local -r string="${1}"
+  local -r substring="${2}"
+  local -r message="${3:-String does not contain expected substring}"
+
+  if [[ ! "${string}" =~ ${substring} ]]; then
+    fail "${message}: '${string}' does not contain '${substring}'"
+    return 1
+  fi
+  return 0
+}
+
+# Assert that a string matches a regex pattern
+# Arguments: $1=string, $2=pattern, $3=optional message
+assert_matches() {
+  local -r string="${1}"
+  local -r pattern="${2}"
+  local -r message="${3:-String does not match pattern}"
+
+  if [[ ! "${string}" =~ ${pattern} ]]; then
+    fail "${message}: '${string}' does not match '${pattern}'"
+    return 1
+  fi
+  return 0
+}
+
+# Assert that a variable is empty
+# Arguments: $1=value, $2=optional message
+assert_empty() {
+  local -r value="${1}"
+  local -r message="${2:-Value is not empty: '${value}'}"
+
+  if [[ -n "${value}" ]]; then
+    fail "${message}"
+    return 1
+  fi
+  return 0
+}
+
+# Assert that a variable is not empty
+# Arguments: $1=value, $2=optional message
+assert_not_empty() {
+  local -r value="${1}"
+  local -r message="${2:-Value is empty}"
+
+  if [[ -z "${value}" ]]; then
+    fail "${message}"
+    return 1
+  fi
+  return 0
+}
+
+# Skip current test
+# Arguments: $@=optional reason
+skip() {
+  local -r reason="${*:-No reason given}"
+  warn "SKIP: ${reason}"
+  CURRENT_TEST_FAILED=2  # Special flag for skip
+  return 0
+}
+
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Test Lifecycle
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Run a single test
+# Arguments: $1=test_name, $2=test_function
+run_test() {
+  local -r test_name="${1}"
+  local -r test_function="${2}"
+
+  CURRENT_TEST="${test_name}"
+  CURRENT_TEST_FAILED=0
+
+  # Run setup if defined
+  if declare -F setup &>/dev/null; then
+    setup || {
+      error "Setup failed for: ${test_name}"
+      CURRENT_TEST_FAILED=1
+    }
+  fi
+
+  # Run the test if setup succeeded
+  if ((CURRENT_TEST_FAILED == 0)); then
+    if "${test_function}"; then
+      : # Test function succeeded
+    else
+      # Test function failed
+      CURRENT_TEST_FAILED=1
+    fi
+  fi
+
+  # Run teardown if defined
+  if declare -F teardown &>/dev/null; then
+    teardown || {
+      warn "Teardown failed for: ${test_name}"
+    }
+  fi
+
+  # Record result
+  ((TESTS_RUN += 1))
+
+  if ((CURRENT_TEST_FAILED == 2)); then
+    # Skipped
+    ((TESTS_SKIPPED += 1))
+    echo ""
+  elif ((CURRENT_TEST_FAILED == 0)); then
+    # Passed
+    ((TESTS_PASSED += 1))
+    success "${test_name}"
+    echo ""
+  else
+    # Failed
+    ((TESTS_FAILED += 1))
+    error "${test_name}"
+    FAILED_TESTS+=("${test_name}")
+    echo ""
+  fi
+}
+
+# Run all registered tests
+# Arguments: none
+run_all_tests() {
+  local -i test_count="${#TEST_NAMES[@]}"
+  local -i i=0
+
+  if ((test_count == 0)); then
+    warn "No tests registered"
+    return 1
+  fi
+
+  print_color "${COLOR_BOLD}" "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  print_color "${COLOR_BOLD}" "Running ${test_count} test(s)"
+  print_color "${COLOR_BOLD}" "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo ""
+
+  for ((i = 0; i < test_count; i += 1)); do
+    run_test "${TEST_NAMES[i]}" "${TEST_FUNCTIONS[i]}"
+  done
+}
+
+# Print test summary
+# Arguments: none
+print_summary() {
+  local -i total=0
+  ((total = TESTS_PASSED + TESTS_FAILED + TESTS_SKIPPED))
+
+  print_color "${COLOR_BOLD}" "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  print_color "${COLOR_BOLD}" "Test Summary"
+  print_color "${COLOR_BOLD}" "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo ""
+
+  print_color "${COLOR_CYAN}" "Total:   ${total}"
+  print_color "${COLOR_GREEN}" "Passed:  ${TESTS_PASSED}"
+  print_color "${COLOR_RED}" "Failed:  ${TESTS_FAILED}"
+  print_color "${COLOR_YELLOW}" "Skipped: ${TESTS_SKIPPED}"
+  echo ""
+
+  if ((TESTS_FAILED > 0)); then
+    print_color "${COLOR_RED}" "Failed tests:"
+    local -i i=0
+    for ((i = 0; i < ${#FAILED_TESTS[@]}; i += 1)); do
+      print_color "${COLOR_RED}" "  - ${FAILED_TESTS[i]}"
+    done
+    echo ""
+  fi
+
+  if ((TESTS_FAILED == 0)); then
+    print_color "${COLOR_GREEN}${COLOR_BOLD}" "✓ All tests passed!"
+  else
+    print_color "${COLOR_RED}${COLOR_BOLD}" "✗ Some tests failed"
+  fi
+
+  print_color "${COLOR_BOLD}" "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+}
+
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Main Function
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Main entry point when sourced
+# Arguments: none
+run_harness() {
+  run_all_tests
+  print_summary
+
+  # Exit with appropriate code
+  if ((TESTS_FAILED > 0)); then
+    exit 1
+  else
+    exit 0
+  fi
+}
+
+# If script is executed directly (not sourced), show usage
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  cat <<'EOF'
+test-harness - BCS-compliant test framework for Bash scripts
+
+USAGE:
+  Source this file in your test script:
+    #!/usr/bin/env bash
+    source ./test-harness
+
+    # Define your tests
+    test_example() {
+      assert_equals "expected" "actual"
+    }
+
+    test "Example test" test_example
+
+    # Run all tests
+    run_harness
+
+FUNCTIONS:
+  test <name> <function>        Register a test
+
+  Assertions:
+    assert_equals <expected> <actual> [message]
+    assert_not_equals <not_expected> <actual> [message]
+    assert_success <command...>
+    assert_failure <command...>
+    assert_exit_code <code> <command...>
+    assert_file_exists <path> [message]
+    assert_file_not_exists <path> [message]
+    assert_symlink <path> [message]
+    assert_symlink_to <symlink> <target> [message]
+    assert_executable <path> [message]
+    assert_contains <string> <substring> [message]
+    assert_matches <string> <pattern> [message]
+    assert_empty <value> [message]
+    assert_not_empty <value> [message]
+
+    skip [reason]                Skip current test
+    fail <message>               Manually fail current test
+
+  Lifecycle:
+    setup()                      Run before each test (optional)
+    teardown()                   Run after each test (optional)
+
+  Execution:
+    run_harness                  Run all tests and exit
+
+EOF
+  exit 0
+fi
+
+#fin

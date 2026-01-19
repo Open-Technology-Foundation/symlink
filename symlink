@@ -22,14 +22,13 @@ shopt -s inherit_errexit shift_verbose extglob nullglob
   exit $?
 }
 
-declare -- VERSION SCRIPT_PATH SCRIPT_NAME SCRIPT_DIR ORIG_DIR DEFAULT_TARGET_DIR CRITICAL_FILES
-VERSION='1.4.0'
-SCRIPT_PATH=$(realpath -- "$0")
-SCRIPT_NAME=${SCRIPT_PATH##*/}
-SCRIPT_DIR=${SCRIPT_PATH%/*}
-ORIG_DIR=$(pwd)
-DEFAULT_TARGET_DIR='/usr/local/bin'
-CRITICAL_FILES=(awk bash cat chgrp chmod chown clang cp dash date df du echo file find gcc git grep groupadd groupdel head hostname ifconfig ip kill less login ls make mkdir mount mv netstat passwd ping ps reboot rm rmdir sed sh shutdown ss sudo tail top touch umount useradd userdel vi vim zsh)
+declare -r VERSION=1.4.0
+declare -r SCRIPT_PATH=$(realpath -- "$0")
+declare -r SCRIPT_NAME=${SCRIPT_PATH##*/} SCRIPT_DIR=${SCRIPT_PATH%/*}
+
+declare -r ORIG_DIR=$(pwd)
+declare -r DEFAULT_TARGET_DIR=${DEFAULT_TARGET_DIR:-/usr/local/bin}
+declare -r CRITICAL_FILES=(awk bash cat chgrp chmod chown clang cp dash date df du echo file find gcc git grep groupadd groupdel head hostname ifconfig ip kill less login ls make mkdir mount mv netstat passwd ping ps reboot rm rmdir sed sh shutdown ss sudo tail top touch umount useradd userdel vi vim zsh)
 
 # Initialize key variables early
 declare -i SCANSYMLINK=0
@@ -58,8 +57,8 @@ fi
 
 # Core message function using FUNCNAME for context
 _msg() {
-  local -- status="${FUNCNAME[1]}" prefix="$SCRIPT_NAME:" msg
-  case "$status" in
+  local -- prefix="$SCRIPT_NAME:" msg
+  case ${FUNCNAME[1]} in
     success) prefix+=" ${GREEN}✓${NC}" ;;
     warn)    prefix+=" ${YELLOW}▲${NC}" ;;
     info)    prefix+=" ${CYAN}◉${NC}" ;;
@@ -78,21 +77,21 @@ info() { ((VERBOSE)) || return 0; >&2 _msg "$@"; }
 debug() { ((DEBUG)) || return 0; >&2 _msg "$@"; }
 # Unconditional output
 error() { >&2 _msg "$@"; }
-die() { (($# > 1)) && error "${@:2}"; exit "${1:-0}"; }
+die() { (($# < 2)) || error "${@:2}"; exit "${1:-0}"; }
 # yes/no prompt
 yn() {
   ((PROMPT)) || return 0
-  local -- reply
-  >&2 read -r -n 1 -p "$(warn "$1 (y/n) ")" reply
-  >&2 echo
-  [[ ${reply,,} == y ]]
+  local -- REPLY
+  read -r -n 1 -p "$SCRIPT_NAME: ${YELLOW}▲${NC} ${1:-'Continue?'} y/n "
+  echo
+  [[ ${REPLY,,} == y ]]
 }
 
 # --------------------------------------------------------------------------------
 # Utility functions
 # --------------------------------------------------------------------------------
 # Validate argument presence
-noarg() { (($# > 1)) && [[ ${2:0:1} != '-' ]] || die 2 "Missing argument for option ${1@Q}"; }
+noarg() { (($# > 1)) || die 22 "Option ${1@Q} requires an argument"; }
 
 # Display declared variables for debugging
 decp() { declare -p "$@" | sed 's/^declare -[a-zA-Z-]* //'; }
@@ -123,12 +122,9 @@ fi
 # Root privileges are now enforced at the beginning of the script
 debug "Running as root user: EUID=$EUID"
 
-# --------------------------------------------------------------------------------
-# Display usage information and exit
-# --------------------------------------------------------------------------------
-usage() {
+show_help() {
   local -i exit_code="${1:-0}"
-  cat <<EOT
+  cat <<HELP
 $SCRIPT_NAME $VERSION - Create symlinks in /usr/local/bin for executable files
 
 Requires root privileges (automatically uses sudo if needed).
@@ -182,18 +178,18 @@ FORMAT OF .SYMLINK FILES:
       spacetime.bash spacetime   # Creates /usr/local/bin/spacetime
 
 OPTIONS:
+  -l, --list             List contents of all .symlink files only
   -t, --target-dir       Define target dir (default $DEFAULT_TARGET_DIR)
   -S, --scan-symlink     Scan for .symlink files and process them
   -d, --delete-broken-symlinks
                          Clean up broken symlinks after creating new links
   -P, --no-prompt        Do not prompt before replacing existing files
-  -l, --list             List contents of all .symlink files only
   -n, --dry-run          Show what would happen without making changes
   -v, --verbose          Show detailed output
   -q, --quiet            Suppress informational messages (default in non-interactive mode)
+  -D, --debug            Enable debug mode with detailed logging
   -V, --version          Display version information
   -h, --help             Show this help message
-  -D, --debug            Enable debug mode with detailed logging
 
 SAFETY FEATURES:
   • Critical system files (${#CRITICAL_FILES[@]} system binaries) require explicit confirmation
@@ -232,8 +228,7 @@ EXAMPLES:
   # Perform a dry run with detailed debug logging to a temporary file.
   $SCRIPT_NAME --debug -nSPd /path/to/scripts
 
-EOT
-  exit "$exit_code"
+HELP
 }
 
 # --------------------------------------------------------------------------------
@@ -253,7 +248,7 @@ trim() {
 is_critical_file() {
   local -- filename="$1" critical
   for critical in "${CRITICAL_FILES[@]}"; do
-    [[ "$filename" == "$critical" ]] && return 0
+    [[ "$filename" == "$critical" ]] && return 0 ||:
   done
   return 1
 }
@@ -498,7 +493,7 @@ delete_broken_symlinks() {
       count+=1
     done
 
-    ((count)) && info "[DRY RUN] Would delete $count broken symlinks"
+    ((count)) && info "[DRY RUN] Would delete $count broken symlinks" ||:
     return 0
   fi
 
@@ -519,7 +514,7 @@ delete_broken_symlinks() {
     fi
   done
 
-  ((count)) && success "Deleted $count broken symlinks"
+  ((count)) && success "Deleted $count broken symlinks" ||:
 
   debug 'delete_broken_symlinks completed successfully'
   return 0
@@ -543,7 +538,7 @@ print_summary() {
   else
     if (( ${#CREATED_LINKS[@]} == 0 && ${#REPLACED_LINKS[@]} == 0 &&
           ${#SKIPPED_LINKS[@]} == 0 && ${#ERROR_LINKS[@]} == 0 )); then
-      ((VERBOSE)) && echo "[DRY RUN] No operations performed."
+      ((VERBOSE)) && echo "[DRY RUN] No operations performed." ||:
       return 0
     fi
   fi
@@ -553,44 +548,44 @@ print_summary() {
   total=$(( ${#CREATED_LINKS[@]} + ${#REPLACED_LINKS[@]} + ${#SKIPPED_LINKS[@]} + ${#ERROR_LINKS[@]} ))
   echo "Symlinks processed: $total"
 
-  (( ${#CREATED_LINKS[@]} )) && {
+  if(( ${#CREATED_LINKS[@]} )); then
     echo "Symlinks created: ${#CREATED_LINKS[@]}"
-    ((VERBOSE)) && {
+    if ((VERBOSE)); then
       local -- link
       for link in "${CREATED_LINKS[@]}"; do
         echo "  $link"
       done
-    }
-  }
+    fi
+  fi
 
-  (( ${#REPLACED_LINKS[@]} )) && {
+  if (( ${#REPLACED_LINKS[@]} )); then
     echo "Symlinks replaced: ${#REPLACED_LINKS[@]}"
-    ((VERBOSE)) && {
+    if ((VERBOSE)); then
       local -- link
       for link in "${REPLACED_LINKS[@]}"; do
         echo "  $link"
       done
-    }
-  }
+    fi
+  fi
 
-  (( ${#SKIPPED_LINKS[@]} )) && {
+  if (( ${#SKIPPED_LINKS[@]} )); then
     echo "Skipped symlinks: ${#SKIPPED_LINKS[@]}"
-    ((VERBOSE)) && {
+    if ((VERBOSE)); then
       local -- link
       for link in "${SKIPPED_LINKS[@]}"; do
         echo "  $link"
       done
-    }
-  }
+    fi
+  fi
 
   # Always show errors regardless of verbosity
-  (( ${#ERROR_LINKS[@]} )) && {
+  if (( ${#ERROR_LINKS[@]} )); then
     echo "Errors: ${#ERROR_LINKS[@]}"
     local -- link
     for link in "${ERROR_LINKS[@]}"; do
       echo "  $link"
     done
-  }
+  fi
 
   return 0
 }
@@ -604,7 +599,7 @@ main() {
   local -i exit_code=0
 
   # Show usage if no arguments provided
-  (($#)) || >&2 usage 1
+  (($#)) || { >&2 show_help; exit 1; }
 
   # Parse command line options
   while (($#)); do case "$1" in
@@ -616,10 +611,10 @@ main() {
     -d|--delete-broken-symlinks)
                         DELETE_DEAD_SYMLINKS=1 ;;
     # Basic options
-    -h|--help)          usage 0 ;;
+    -h|--help)          show_help; return 0 ;;
     -v|--verbose)       VERBOSE=1 ;;
     -q|--quiet)         VERBOSE=0 ;;
-    -V|--version)       echo "$SCRIPT_NAME $VERSION"; exit 0 ;;
+    -V|--version)       echo "$SCRIPT_NAME $VERSION"; return 0 ;;
     -n|--dry-run)       DRY_RUN=1 ;;
     -D|--debug)         DEBUG=1 ;;
      # Handle combined short options (e.g., -vPd)

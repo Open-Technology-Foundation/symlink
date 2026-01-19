@@ -45,7 +45,7 @@ This scans for `.symlink` files (max depth 5), creates symlinks, skips prompts f
 # Clone and install
 git clone https://github.com/user/symlink.git
 cd symlink
-sudo ./symlink ./symlink
+./symlink -S
 
 # Verify
 symlink --version

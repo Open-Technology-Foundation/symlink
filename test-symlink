@@ -33,13 +33,13 @@ teardown() {
 test_help_short() {
   run_symlink -h
   assert_exit_code 0 echo "${TEST_EXIT_CODE}"
-  assert_contains "${TEST_OUTPUT}" "DESCRIPTION:"
+  assert_contains "${TEST_OUTPUT}" "USAGE:"
 }
 
 test_help_long() {
   run_symlink --help
   assert_exit_code 0 echo "${TEST_EXIT_CODE}"
-  assert_contains "${TEST_OUTPUT}" "DESCRIPTION:"
+  assert_contains "${TEST_OUTPUT}" "USAGE:"
 }
 
 test_version_short() {

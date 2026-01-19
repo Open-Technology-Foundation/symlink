@@ -4,6 +4,7 @@
 # License: GPL-3.0
 
 set -euo pipefail
+shopt -s inherit_errexit extglob nullglob
 
 # Get script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

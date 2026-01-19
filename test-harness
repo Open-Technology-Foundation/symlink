@@ -4,7 +4,7 @@
 # License: GPL-3.0
 
 set -euo pipefail
-shopt -s inherit_errexit
+shopt -s inherit_errexit extglob nullglob
 
 #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Constants

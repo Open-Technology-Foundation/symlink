@@ -17,7 +17,7 @@
 | **ShellCheck Warnings** | 7 (main script), 8 (test-harness), 1 (test-helpers), 445 (test-symlink) |
 | **Critical Issues** | 0 (1 fixed) |
 | **High Issues** | 0 (2 fixed) |
-| **Medium Issues** | 5 (1 fixed) |
+| **Medium Issues** | 4 (2 fixed) |
 | **Low Issues** | 8 |
 
 ### Scripts Audited
@@ -236,16 +236,15 @@ if [[ -t 0 ]]; then PROMPT=1; fi
 - Removed `COLOR_BLUE` (truly unused)
 - Added shellcheck disable directives for metadata vars (VERSION, HARNESS_NAME, CURRENT_TEST)
 
-#### M3: Missing `extglob` and `nullglob` in Test Files
+#### M3: Missing `extglob` and `nullglob` in Test Files — **FIXED**
 
-**Location:** `test-harness`, `test-helpers`, `test-symlink`
+**Location:** `test-harness:7`, `test-helpers:12`, `test-symlink:7`
 **BCS Code:** BCS0101
-**Description:** BCS requires `shopt -s extglob nullglob` for consistent glob behavior.
-**Impact:** Glob patterns may behave unexpectedly.
-**Recommendation:**
-```bash
-shopt -s inherit_errexit extglob nullglob
-```
+**Status:** ✓ **RESOLVED** (2026-01-19)
+
+**Original Issue:** Test files lacked `extglob nullglob` shopt options.
+
+**Fix Applied:** Updated all test files to use `shopt -s inherit_errexit extglob nullglob`.
 
 #### M4: Test Function Indirect Invocation Warning
 

@@ -471,6 +471,97 @@ EOF
   assert_symlink_created "test.sh"
 }
 
+test_scan_symlink_file_with_inline_comments() {
+  # Test inline comments (comments on same line as source entry)
+  local -r test_script="${TEST_SOURCE_DIR}/util.sh"
+  create_mock_executable "${test_script}"
+
+  local -r symlink_file="${TEST_SOURCE_DIR}/.symlink"
+  cat > "${symlink_file}" <<EOF
+util.sh # This is an inline comment that should be stripped
+EOF
+
+  run_symlink_sudo -S -P -t "${TEST_TARGET_DIR}" "${TEST_SOURCE_DIR}"
+
+  # Should create symlink using basename (inline comment stripped)
+  assert_symlink_created "util.sh"
+}
+
+test_scan_symlink_file_with_inline_comments_and_custom_name() {
+  # Test inline comments with custom link name
+  local -r test_script="${TEST_SOURCE_DIR}/myutil.sh"
+  create_mock_executable "${test_script}"
+
+  local -r symlink_file="${TEST_SOURCE_DIR}/.symlink"
+  cat > "${symlink_file}" <<EOF
+myutil.sh myutil # Custom name with inline comment
+EOF
+
+  run_symlink_sudo -S -P -t "${TEST_TARGET_DIR}" "${TEST_SOURCE_DIR}"
+
+  # Should create symlink with custom name (inline comment stripped)
+  assert_file_exists "${TEST_TARGET_DIR}/myutil"
+  assert_symlink_to "${TEST_TARGET_DIR}/myutil" "${test_script}"
+}
+
+test_scan_symlink_file_with_multi_names() {
+  # Test multiple link names from a single source file
+  local -r test_script="${TEST_SOURCE_DIR}/utility.sh"
+  create_mock_executable "${test_script}"
+
+  local -r symlink_file="${TEST_SOURCE_DIR}/.symlink"
+  cat > "${symlink_file}" <<EOF
+utility.sh helper util-cmd toolbox
+EOF
+
+  run_symlink_sudo -S -P -t "${TEST_TARGET_DIR}" "${TEST_SOURCE_DIR}"
+
+  # All three symlinks should be created pointing to the same source
+  assert_file_exists "${TEST_TARGET_DIR}/helper"
+  assert_file_exists "${TEST_TARGET_DIR}/util-cmd"
+  assert_file_exists "${TEST_TARGET_DIR}/toolbox"
+  assert_symlink_to "${TEST_TARGET_DIR}/helper" "${test_script}"
+  assert_symlink_to "${TEST_TARGET_DIR}/util-cmd" "${test_script}"
+  assert_symlink_to "${TEST_TARGET_DIR}/toolbox" "${test_script}"
+}
+
+test_scan_symlink_file_with_multi_names_and_inline_comment() {
+  # Test multiple link names with inline comment
+  local -r test_script="${TEST_SOURCE_DIR}/build.bash"
+  create_mock_executable "${test_script}"
+
+  local -r symlink_file="${TEST_SOURCE_DIR}/.symlink"
+  cat > "${symlink_file}" <<EOF
+build.bash build compile # Build tools
+EOF
+
+  run_symlink_sudo -S -P -t "${TEST_TARGET_DIR}" "${TEST_SOURCE_DIR}"
+
+  # Both symlinks should be created (inline comment stripped)
+  assert_file_exists "${TEST_TARGET_DIR}/build"
+  assert_file_exists "${TEST_TARGET_DIR}/compile"
+  assert_symlink_to "${TEST_TARGET_DIR}/build" "${test_script}"
+  assert_symlink_to "${TEST_TARGET_DIR}/compile" "${test_script}"
+}
+
+test_scan_symlink_file_with_indented_comments() {
+  # Test indented comments (valid per parsing rules)
+  local -r test_script="${TEST_SOURCE_DIR}/script.sh"
+  create_mock_executable "${test_script}"
+
+  local -r symlink_file="${TEST_SOURCE_DIR}/.symlink"
+  cat > "${symlink_file}" <<EOF
+  # This is an indented comment
+script.sh
+    # Another indented comment with more spaces
+EOF
+
+  run_symlink_sudo -S -P -t "${TEST_TARGET_DIR}" "${TEST_SOURCE_DIR}"
+
+  # Should only create symlink for script.sh (indented comments ignored)
+  assert_symlink_created "script.sh"
+}
+
 test_scan_nested_symlink_files() {
   # Create nested directory structure
   local -r subdir="${TEST_SOURCE_DIR}/subdir"
@@ -752,8 +843,48 @@ test_multiple_files_in_one_command() {
 }
 
 test_symlink_file_with_windows_line_endings() {
-  # Known limitation: symlink script doesn't currently trim CRLF
-  skip "Windows line endings (CRLF) not currently supported in .symlink files"
+  local -r test_script="${TEST_SOURCE_DIR}/crlf-test.sh"
+  create_mock_executable "${test_script}"
+
+  local -r symlink_file="${TEST_SOURCE_DIR}/.symlink"
+  # Create file with CRLF line endings
+  printf 'crlf-test.sh\r\n' > "${symlink_file}"
+
+  run_symlink_sudo -S -P -t "${TEST_TARGET_DIR}" "${TEST_SOURCE_DIR}"
+
+  assert_symlink_created "crlf-test.sh"
+}
+
+test_symlink_file_with_escaped_spaces() {
+  local -r test_script="${TEST_SOURCE_DIR}/my script.sh"
+  create_mock_executable "${test_script}"
+  printf 'my\\ script.sh\n' > "${TEST_SOURCE_DIR}/.symlink"
+  run_symlink_sudo -S -P -t "${TEST_TARGET_DIR}" "${TEST_SOURCE_DIR}"
+  assert_file_exists "${TEST_TARGET_DIR}/my script.sh"
+}
+
+test_symlink_file_escaped_space_custom_name() {
+  local -r test_script="${TEST_SOURCE_DIR}/my script.sh"
+  create_mock_executable "${test_script}"
+  printf 'my\\ script.sh myscript\n' > "${TEST_SOURCE_DIR}/.symlink"
+  run_symlink_sudo -S -P -t "${TEST_TARGET_DIR}" "${TEST_SOURCE_DIR}"
+  assert_symlink_created "myscript"
+}
+
+test_symlink_file_escaped_space_in_path() {
+  mkdir -p "${TEST_SOURCE_DIR}/my tools"
+  create_mock_executable "${TEST_SOURCE_DIR}/my tools/helper.sh"
+  printf 'my\\ tools/helper.sh\n' > "${TEST_SOURCE_DIR}/.symlink"
+  run_symlink_sudo -S -P -t "${TEST_TARGET_DIR}" "${TEST_SOURCE_DIR}"
+  assert_symlink_created "helper.sh"
+}
+
+test_symlink_file_multiple_escaped_spaces() {
+  local -r test_script="${TEST_SOURCE_DIR}/my great script.sh"
+  create_mock_executable "${test_script}"
+  printf 'my\\ great\\ script.sh mgs\n' > "${TEST_SOURCE_DIR}/.symlink"
+  run_symlink_sudo -S -P -t "${TEST_TARGET_DIR}" "${TEST_SOURCE_DIR}"
+  assert_symlink_created "mgs"
 }
 
 #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -917,6 +1048,11 @@ test "Scan single .symlink file" test_scan_single_symlink_file
 test "Scan .symlink with custom names" test_scan_symlink_file_with_custom_names
 test "Scan .symlink with comments" test_scan_symlink_file_with_comments
 test "Scan .symlink with blank lines" test_scan_symlink_file_with_blank_lines
+test "Scan .symlink with inline comments" test_scan_symlink_file_with_inline_comments
+test "Scan .symlink with inline comments and custom name" test_scan_symlink_file_with_inline_comments_and_custom_name
+test "Scan .symlink with multiple link names" test_scan_symlink_file_with_multi_names
+test "Scan .symlink with multi-names and inline comment" test_scan_symlink_file_with_multi_names_and_inline_comment
+test "Scan .symlink with indented comments" test_scan_symlink_file_with_indented_comments
 test "Scan nested .symlink files" test_scan_nested_symlink_files
 test "Scan respects max depth limit" test_scan_respects_max_depth
 test "List mode shows .symlink files" test_list_mode_shows_symlink_files
@@ -949,6 +1085,10 @@ test "Handle script without extension" test_handle_script_without_extension
 test "Handle hidden file" test_handle_hidden_file
 test "Multiple files in one command" test_multiple_files_in_one_command
 test ".symlink file with Windows line endings" test_symlink_file_with_windows_line_endings
+test ".symlink file with escaped spaces" test_symlink_file_with_escaped_spaces
+test ".symlink file escaped space with custom name" test_symlink_file_escaped_space_custom_name
+test ".symlink file escaped space in path" test_symlink_file_escaped_space_in_path
+test ".symlink file multiple escaped spaces" test_symlink_file_multiple_escaped_spaces
 
 # Integration workflows
 test "Workflow: admin full scan" test_workflow_admin_full_scan

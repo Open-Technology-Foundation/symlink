@@ -722,21 +722,46 @@ main() {
         local -- script_path link_name source_file
         local -a tokens link_names
         while IFS= read -r line || [[ -n "$line" ]]; do
+          line="${line%$'\r'}"  # Strip Windows/Mac CR
           # Strip inline comments and trim whitespace
           line="${line%%#*}"
           line=$(trim "$line")
           [[ -z "$line" ]] && continue
 
           # Parse line into tokens: source [linkname...]
-          read -ra tokens <<< "$line"
-          source_file="${tokens[0]}"
+          # Supports backslash-escaped spaces in source paths (e.g., my\ script.sh)
+          local -- source_raw='' remainder=''
+          local -i idx=0 len=${#line}
+          local -- prev_char=''
+
+          # Find first unescaped space to separate source from link names
+          while ((idx < len)); do
+            local -- ch="${line:idx:1}"
+            if [[ "$ch" == ' ' && "$prev_char" != '\' ]]; then
+              source_raw="${line:0:idx}"
+              remainder="${line:idx+1}"
+              break
+            fi
+            prev_char="$ch"
+            idx+=1
+          done
+          # No unescaped space found - entire line is source
+          [[ -z "$source_raw" ]] && source_raw="$line"
+
+          # Unescape backslash-spaces and build full path
+          source_file="${source_raw//\\ / }"
           script_path="$symlink_dir/$source_file"
 
-          # Build array of link names (default to basename if none specified)
-          if (( ${#tokens[@]} == 1 )); then
-            link_names=("$(basename "$source_file")")
+          # Build array of link names from remainder (default to basename if none)
+          if [[ -n "$remainder" ]]; then
+            remainder=$(trim "$remainder")
+            if [[ -n "$remainder" ]]; then
+              read -ra link_names <<< "$remainder"
+            else
+              link_names=("$(basename "$source_file")")
+            fi
           else
-            link_names=("${tokens[@]:1}")
+            link_names=("$(basename "$source_file")")
           fi
 
           # Validate source file once before creating links

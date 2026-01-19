@@ -11,13 +11,22 @@ Create a `.symlink` file in any project directory listing executables to make av
 
 ```
 # Comments start with #
-script1                       # → script1
-tools/script2                 # → script2 (relative paths supported)
-build.bash build              # → build (custom link name)
+  # Indented comments are valid
+
+script1                       # → script1 (inline comments stripped)
+tools/script2                 # → script2
+build.bash build              # → build (custom name)
 util.sh helper util-cmd       # → helper AND util-cmd (multiple links)
 ```
 
-Format: `<source> [<linkname>...]` — one entry per line. Inline comments (`# ...`) are stripped.
+**Format:** `<source> [<linkname>...]` — paths relative to `.symlink` location.
+
+**Parsing rules:**
+1. Strip inline comments (`#` to end of line)
+2. Trim leading/trailing whitespace
+3. Skip empty lines
+4. First token = source file, remaining tokens = link names
+5. If no link names specified, use `basename(source)`
 
 Process all `.symlink` files in a directory tree:
 

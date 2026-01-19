@@ -737,7 +737,7 @@ main() {
           # Find first unescaped space to separate source from link names
           while ((idx < len)); do
             local -- ch="${line:idx:1}"
-            if [[ "$ch" == ' ' && "$prev_char" != '\' ]]; then
+            if [[ "$ch" == ' ' && "$prev_char" != $'\\' ]]; then
               source_raw="${line:0:idx}"
               remainder="${line:idx+1}"
               break

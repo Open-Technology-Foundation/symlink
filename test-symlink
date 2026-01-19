@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2317  # Functions invoked indirectly via test framework
 # test-symlink - Comprehensive test suite for symlink script
 # Version: 1.0.0
 # License: GPL-3.0

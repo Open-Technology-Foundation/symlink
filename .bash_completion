@@ -37,7 +37,7 @@ _symlink() {
 
   # Determine completion context based on options already provided
   local i scan_mode=0 list_mode=0
-  for ((i=1; i < cword; i++)); do
+  for ((i=1; i < cword; i+=1)); do
     case "${words[i]}" in
       -S|--scan-symlink)
         scan_mode=1

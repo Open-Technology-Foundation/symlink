@@ -17,7 +17,7 @@
 | **ShellCheck Warnings** | 7 (main script), 8 (test-harness), 1 (test-helpers), 445 (test-symlink) |
 | **Critical Issues** | 0 (1 fixed) |
 | **High Issues** | 0 (2 fixed) |
-| **Medium Issues** | 4 (2 fixed) |
+| **Medium Issues** | 0 (6 fixed) |
 | **Low Issues** | 8 |
 
 ### Scripts Audited
@@ -246,40 +246,35 @@ if [[ -t 0 ]]; then PROMPT=1; fi
 
 **Fix Applied:** Updated all test files to use `shopt -s inherit_errexit extglob nullglob`.
 
-#### M4: Test Function Indirect Invocation Warning
+#### M4: Test Function Indirect Invocation Warning — **FIXED**
 
-**Location:** `test-symlink` (443 occurrences)
+**Location:** `test-symlink:2`
 **ShellCheck:** SC2317
-**Description:** ShellCheck cannot trace indirect function calls through test framework.
-**Impact:** False positives obscure real issues.
-**Recommendation:** Add directive at top of file:
-```bash
-# shellcheck disable=SC2317  # Functions invoked indirectly via test framework
-```
+**Status:** ✓ **RESOLVED** (2026-01-19)
 
-#### M5: Single Quote Character Comparison
+**Original Issue:** 443 false positive warnings for indirectly invoked test functions.
+
+**Fix Applied:** Added `# shellcheck disable=SC2317` directive at top of file.
+
+#### M5: Single Quote Character Comparison — **FIXED**
 
 **Location:** `symlink:740`
 **ShellCheck:** SC1003
-**Description:** `[[ "$prev_char" != '\' ]]` flagged for quote escaping.
-**Impact:** None - this is correct code, ShellCheck misinterprets intent.
-**Recommendation:** Either ignore or use alternative:
-```bash
-[[ "$prev_char" != '\' ]]  # Current (correct)
-# Or explicit
-[[ "$prev_char" != $'\\' ]]
-```
+**Status:** ✓ **RESOLVED** (2026-01-19)
 
-#### M6: Bash Completion Uses ((i++))
+**Original Issue:** ShellCheck flagged backslash comparison syntax.
+
+**Fix Applied:** Changed `'\''` to `$'\\'` for explicit ANSI-C quoting.
+
+#### M6: Bash Completion Uses ((i++)) — **FIXED**
 
 **Location:** `.bash_completion:40`
 **BCS Code:** BCS0701
-**Description:** Uses `for ((i=1; i < cword; i++))` with implicit increment.
-**Impact:** BCS requires explicit `i+=1` pattern.
-**Recommendation:**
-```bash
-for ((i=1; i < cword; i+=1)); do
-```
+**Status:** ✓ **RESOLVED** (2026-01-19)
+
+**Original Issue:** Used `i++` instead of BCS-required `i+=1`.
+
+**Fix Applied:** Changed to `for ((i=1; i < cword; i+=1)); do`.
 
 ### Low Severity
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bash completion for symlink utility v1.3.7+
+# Bash completion for symlink utility v1.4.0+
 # Provides completion for options, files, and directories
 
 _symlink() {

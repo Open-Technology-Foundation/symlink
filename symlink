@@ -783,6 +783,21 @@ main() {
 
           # Create symlink for each link name
           for link_name in "${link_names[@]}"; do
+            # Check for critical system files (same protection as direct mode)
+            if is_critical_file "$link_name"; then
+              if ((DRY_RUN)); then
+                info "[DRY RUN] Would skip critical file ${link_name@Q}"
+                SKIPPED_LINKS+=("$script_path → $target_dir/$link_name (critical file)")
+                continue
+              fi
+              if [[ -z "${SYMLINK_FORCE_CRITICAL:-}" ]]; then
+                warn "Skipping critical system file ${link_name@Q}"
+                SKIPPED_LINKS+=("$script_path → $target_dir/$link_name (critical file)")
+                continue
+              fi
+              warn "CRITICAL FILE: ${link_name@Q} (SYMLINK_FORCE_CRITICAL override)"
+            fi
+
             count+=1
             if ((DRY_RUN)); then
               info "[DRY RUN] Would create symlink: $script_path → $target_dir/$link_name"

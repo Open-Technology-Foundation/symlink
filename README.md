@@ -11,10 +11,13 @@ Create a `.symlink` file in any project directory listing executables to make av
 
 ```
 # Comments start with #
-script1
-tools/script2        # Relative paths from .symlink location
-bin/tool3:mytool     # Optional: custom link name after colon
+script1                       # → script1
+tools/script2                 # → script2 (relative paths supported)
+build.bash build              # → build (custom link name)
+util.sh helper util-cmd       # → helper AND util-cmd (multiple links)
 ```
+
+Format: `<source> [<linkname>...]` — one entry per line. Inline comments (`# ...`) are stripped.
 
 Process all `.symlink` files in a directory tree:
 

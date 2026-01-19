@@ -122,11 +122,12 @@ USAGE:
   $SCRIPT_NAME -l [startpath]              List .symlink contents only
 
 .SYMLINK FILE FORMAT:
-  One executable per line, relative to file location. Optional custom name after space.
-    script1                    # → /usr/local/bin/script1
-    tools/script2              # → /usr/local/bin/script2
-    spacetime.bash spacetime   # → /usr/local/bin/spacetime
-  Empty lines and #comments ignored.
+  Each line: <source> [<linkname>...]  (relative to .symlink location)
+    script1                    # → script1
+    tools/script2              # → script2
+    build.bash build           # → build (custom name)
+    util.sh helper util-cmd    # → helper AND util-cmd (multiple links)
+  Comments: lines starting with # or inline # to EOL. Empty lines ignored.
 
 OPTIONS:
   -S, --scan-symlink     Scan for .symlink files and process them
@@ -718,62 +719,60 @@ main() {
         count=0
 
         # Read the .symlink file
-        local -- script_path link_name
+        local -- script_path link_name source_file
+        local -a tokens link_names
         while IFS= read -r line || [[ -n "$line" ]]; do
-          # Skip empty lines and comments
-          [[ -z "$line" || "${line:0:1}" == "#" ]] && continue
-
-          # Trim leading/trailing whitespace
+          # Strip inline comments and trim whitespace
+          line="${line%%#*}"
           line=$(trim "$line")
-          [[ -n "$line" ]] || continue
+          [[ -z "$line" ]] && continue
 
-          # Parse line for source_file and optional custom_name
-          read -r source_file custom_name <<< "$line"
+          # Parse line into tokens: source [linkname...]
+          read -ra tokens <<< "$line"
+          source_file="${tokens[0]}"
+          script_path="$symlink_dir/$source_file"
 
-          # Get the full path to the script
-          script_path="$symlink_dir"/"$source_file"
-          link_name="${custom_name:-$(basename "$source_file")}"
-          count+=1
-
-          if ((DRY_RUN)); then
-            # For dry run, just check if it exists
-            if [[ ! -f "$script_path" ]]; then
-              error "Source file does not exist: '$script_path'"
-              ERROR_LINKS+=("$script_path → $target_dir/$link_name (not found)")
-              continue
-            fi
-
-            if [[ ! -x "$script_path" ]]; then
-              error "Source file not executable: '$script_path'"
-              ERROR_LINKS+=("$script_path → $target_dir/$link_name (not executable)")
-              continue
-            fi
-
-            info "[DRY RUN] Would create symlink: $script_path → $target_dir/$link_name"
-            CREATED_LINKS+=("$script_path → $target_dir/$link_name")
+          # Build array of link names (default to basename if none specified)
+          if (( ${#tokens[@]} == 1 )); then
+            link_names=("$(basename "$source_file")")
           else
-            # For real operation, create the link
-            if [[ ! -f "$script_path" ]]; then
-              error "Source file does not exist: '$script_path'"
+            link_names=("${tokens[@]:1}")
+          fi
+
+          # Validate source file once before creating links
+          if [[ ! -f "$script_path" ]]; then
+            error "Source file does not exist: '$script_path'"
+            for link_name in "${link_names[@]}"; do
               ERROR_LINKS+=("$script_path → $target_dir/$link_name (not found)")
-              continue
-            fi
+            done
+            continue
+          fi
 
-            if [[ ! -x "$script_path" ]]; then
-              error "Source file not executable: '$script_path'"
+          if [[ ! -x "$script_path" ]]; then
+            error "Source file not executable: '$script_path'"
+            for link_name in "${link_names[@]}"; do
               ERROR_LINKS+=("$script_path → $target_dir/$link_name (not executable)")
-              continue
-            fi
+            done
+            continue
+          fi
 
-            if ln -sf "$(realpath -- "$script_path")" "$target_dir/$link_name"; then
-              info "Created symlink: $script_path → $target_dir/$link_name"
-              change_symlink_owner_perms "$script_path" "$target_dir/$link_name"
+          # Create symlink for each link name
+          for link_name in "${link_names[@]}"; do
+            count+=1
+            if ((DRY_RUN)); then
+              info "[DRY RUN] Would create symlink: $script_path → $target_dir/$link_name"
               CREATED_LINKS+=("$script_path → $target_dir/$link_name")
             else
-              error "Failed to create symlink: $script_path → $target_dir/$link_name"
-              ERROR_LINKS+=("$script_path → $target_dir/$link_name (link failed)")
+              if ln -sf "$(realpath -- "$script_path")" "$target_dir/$link_name"; then
+                info "Created symlink: $script_path → $target_dir/$link_name"
+                change_symlink_owner_perms "$script_path" "$target_dir/$link_name"
+                CREATED_LINKS+=("$script_path → $target_dir/$link_name")
+              else
+                error "Failed to create symlink: $script_path → $target_dir/$link_name"
+                ERROR_LINKS+=("$script_path → $target_dir/$link_name (link failed)")
+              fi
             fi
-          fi
+          done
         done < "$symlink"
 
         debug "Processed $count entries from $symlink"

@@ -17,7 +17,7 @@
 | **ShellCheck Warnings** | 7 (main script), 8 (test-harness), 1 (test-helpers), 445 (test-symlink) |
 | **Critical Issues** | 0 (1 fixed) |
 | **High Issues** | 0 (2 fixed) |
-| **Medium Issues** | 6 |
+| **Medium Issues** | 5 (1 fixed) |
 | **Low Issues** | 8 |
 
 ### Scripts Audited
@@ -223,13 +223,18 @@ fi
 if [[ -t 0 ]]; then PROMPT=1; fi
 ```
 
-#### M2: Unused Variables in Test Harness
+#### M2: Unused Variables in Test Harness — **FIXED**
 
-**Location:** `test-harness:12,13,35,51`
+**Location:** `test-harness`
 **ShellCheck:** SC2034
-**Description:** VERSION, HARNESS_NAME, FAILED_MESSAGES, COLOR_BLUE declared but appear unused.
-**Impact:** Code bloat, confusion.
-**Recommendation:** Either use these variables or remove them. If intended for external use, add export or document.
+**Status:** ✓ **RESOLVED** (2026-01-19)
+
+**Original Issue:** VERSION, HARNESS_NAME, FAILED_MESSAGES, COLOR_BLUE, CURRENT_TEST flagged as unused.
+
+**Fix Applied:**
+- Removed `FAILED_MESSAGES` (truly unused)
+- Removed `COLOR_BLUE` (truly unused)
+- Added shellcheck disable directives for metadata vars (VERSION, HARNESS_NAME, CURRENT_TEST)
 
 #### M3: Missing `extglob` and `nullglob` in Test Files
 

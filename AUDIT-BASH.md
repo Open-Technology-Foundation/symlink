@@ -16,7 +16,7 @@
 | **Scripts Audited** | 4 |
 | **ShellCheck Warnings** | 7 (main script), 8 (test-harness), 1 (test-helpers), 445 (test-symlink) |
 | **Critical Issues** | 0 (1 fixed) |
-| **High Issues** | 2 |
+| **High Issues** | 1 (1 fixed) |
 | **Medium Issues** | 6 |
 | **Low Issues** | 8 |
 
@@ -186,17 +186,15 @@ fi
 
 ### High Severity
 
-#### H1: Missing shopt in Test Files
+#### H1: Missing shopt in Test Files — **FIXED**
 
-**Location:** `test-harness:6`, `test-helpers:7`
+**Location:** `test-harness:7`, `test-helpers:12`
 **BCS Code:** BCS0101
-**Description:** Test files lack `shopt -s inherit_errexit` which is required by BCS.
-**Impact:** Error handling may not propagate correctly from subshells.
-**Recommendation:**
-```bash
-# Add after set -euo pipefail
-shopt -s inherit_errexit
-```
+**Status:** ✓ **RESOLVED** (2026-01-19)
+
+**Original Issue:** Test files lacked `shopt -s inherit_errexit`.
+
+**Fix Applied:** Added `shopt -s inherit_errexit` to both files.
 
 #### H2: Declare and Assign Combined
 

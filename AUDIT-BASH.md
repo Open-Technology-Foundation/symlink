@@ -16,7 +16,7 @@
 | **Scripts Audited** | 4 |
 | **ShellCheck Warnings** | 7 (main script), 8 (test-harness), 1 (test-helpers), 445 (test-symlink) |
 | **Critical Issues** | 0 (1 fixed) |
-| **High Issues** | 1 (1 fixed) |
+| **High Issues** | 0 (2 fixed) |
 | **Medium Issues** | 6 |
 | **Low Issues** | 8 |
 
@@ -196,17 +196,15 @@ fi
 
 **Fix Applied:** Added `shopt -s inherit_errexit` to both files.
 
-#### H2: Declare and Assign Combined
+#### H2: Declare and Assign Combined — **FIXED**
 
-**Location:** `test-symlink:9`
+**Location:** `test-symlink:9-10`
 **ShellCheck:** SC2155
-**Description:** `readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"` masks return value.
-**Impact:** If cd fails, the error is hidden.
-**Recommendation:**
-```bash
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-readonly SCRIPT_DIR
-```
+**Status:** ✓ **RESOLVED** (2026-01-19)
+
+**Original Issue:** Combined readonly declaration masked return value.
+
+**Fix Applied:** Split into separate assign and readonly statements.
 
 ### Medium Severity
 

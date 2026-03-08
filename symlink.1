@@ -1,0 +1,296 @@
+.\" Symlink Manual Page
+.\" Generated: 2026-03-08
+.\"
+.TH SYMLINK 1 "March 2026" "symlink 1.4.0" "User Commands"
+.\"
+.SH NAME
+symlink \- create symlinks in /usr/local/bin for executables
+.\"
+.SH SYNOPSIS
+.B symlink
+.RI [ OPTIONS ]
+.IR scriptpath ...
+.br
+.B symlink
+.B \-S
+.RI [ OPTIONS ]
+.RI [ startpath ]
+.br
+.B symlink
+.B \-l
+.RI [ startpath ]
+.\"
+.SH DESCRIPTION
+.B symlink
+creates symbolic links in
+.I /usr/local/bin
+(or a custom target directory) for executable scripts, making them
+accessible system-wide. It supports both direct file linking and batch
+processing via
+.I .symlink
+configuration files.
+.PP
+The utility automatically elevates to root privileges via
+.BR sudo (8)
+when not already running as root. In interactive mode (stdin is a
+terminal), confirmation prompts are enabled by default.
+.PP
+Three modes of operation are available:
+.TP
+.B Direct Linking
+Specify one or more script paths as arguments. Each script is linked
+into the target directory using its basename.
+.TP
+.B Scan Mode (\-S)
+Recursively search a directory tree (max depth 5) for
+.I .symlink
+batch files and process all entries found.
+.TP
+.B List Mode (\-l)
+Display the contents of
+.I .symlink
+files found in the directory tree without creating any links.
+.\"
+.SH OPTIONS
+.TP
+.BR \-S ", " \-\-scan\-symlink
+Scan for
+.I .symlink
+files and process them. Searches up to 5 directory levels deep.
+.TP
+.BR \-l ", " \-\-list
+List
+.I .symlink
+file contents only (no linking). Cannot be combined with
+.BR \-S .
+.TP
+.BR \-t ", " \-\-target\-dir " " \fIDIR\fR
+Set the target directory for symlink creation. Default is
+.IR /usr/local/bin .
+Can also be set via the
+.B DEFAULT_TARGET_DIR
+environment variable.
+.TP
+.BR \-d ", " \-\-delete\-broken\-symlinks
+Remove broken symlinks in the target directory after processing.
+.TP
+.BR \-P ", " \-\-no\-prompt
+Skip all confirmation prompts. Useful for scripted or non-interactive
+operation.
+.TP
+.BR \-n ", " \-\-dry\-run
+Preview changes without making them. Shows what would be created,
+replaced, or skipped.
+.TP
+.BR \-v ", " \-\-verbose
+Enable detailed output showing each operation as it is performed.
+.TP
+.BR \-q ", " \-\-quiet
+Suppress verbose output (opposite of
+.BR \-v ).
+.TP
+.BR \-D ", " \-\-debug
+Enable debug mode with detailed trace logging to
+.IR /tmp/symlink\-trace\-<user>\-<pid>.log .
+Can also be enabled via the
+.B SYMLINK_DEBUG
+environment variable.
+.TP
+.BR \-V ", " \-\-version
+Display version information and exit.
+.TP
+.BR \-h ", " \-\-help
+Display help message and exit.
+.PP
+Short options may be combined:
+.B \-SPd
+is equivalent to
+.BR "\-S \-P \-d" .
+.\"
+.SH .SYMLINK FILE FORMAT
+A
+.I .symlink
+file defines which executables in a directory should be linked into
+the target directory. Each line specifies a source file and optional
+link names.
+.PP
+.RS
+.I source
+.RI [ linkname ...]
+.RE
+.PP
+Paths are relative to the
+.I .symlink
+file location.
+.SS Parsing Rules
+.TP
+.B 1.
+Strip inline comments
+.RB ( #
+to end of line).
+.TP
+.B 2.
+Trim leading and trailing whitespace.
+.TP
+.B 3.
+Skip empty lines.
+.TP
+.B 4.
+First token is the source file (supports
+.B \e\
+for literal spaces in filenames). Remaining tokens are link names.
+.TP
+.B 5.
+If no link names are specified, the basename of the source is used.
+.TP
+.B 6.
+Link names do NOT support spaces (commands in /usr/local/bin should not
+have spaces).
+.SS Examples
+.PP
+.nf
+.RS
+# Comments start with #
+  # Indented comments are valid
+
+script1                    # \(-> script1
+tools/script2              # \(-> script2
+build.bash build           # \(-> build (custom name)
+util.sh helper util\-cmd    # \(-> helper AND util\-cmd
+my\e script.sh              # \(-> my script.sh (escaped space)
+my\e script.sh myscript     # \(-> myscript
+.RE
+.fi
+.\"
+.SH SAFETY
+.B symlink
+includes multiple safety mechanisms to prevent accidental damage to
+the system:
+.TP
+.B Critical File Protection
+53 critical system binaries (including
+.BR bash ", " sudo ", " ls ", " rm ", " cp ", " mv ", " grep ", " sed )
+are protected from accidental replacement. In non-interactive mode,
+attempts to overwrite these files are silently skipped unless
+.B SYMLINK_FORCE_CRITICAL
+is set. In interactive mode, an explicit confirmation is required.
+.TP
+.B Scan Depth Limiting
+Directory scanning is limited to 5 levels deep
+.RB ( FIND_MAX_DEPTH )
+to prevent excessive traversal.
+.TP
+.B Path Resolution Timeout
+A 2-second timeout is applied when resolving source file paths via
+.BR realpath (1),
+preventing hangs on unresponsive filesystems.
+.TP
+.B Target Directory Restrictions
+Scanning within the target directory itself
+.RI ( /usr/local/bin
+by default) is restricted to prevent recursive symlink creation.
+.TP
+.B Auto\-Sudo Elevation
+The script automatically re-executes itself under
+.BR sudo (8)
+when not running as root, ensuring proper privileges without
+requiring the user to remember to prefix with sudo.
+.\"
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B 1
+General error.
+.TP
+.B 2
+Permission denied.
+.TP
+.B 3
+File not found.
+.TP
+.B 22
+Invalid option (EINVAL).
+.TP
+.B 50
+No .symlink files found during scan.
+.\"
+.SH ENVIRONMENT
+.TP
+.B SYMLINK_DEBUG
+Set to
+.B 1
+to enable debug mode. Equivalent to the
+.B \-D
+option. Writes trace output to
+.IR /tmp/symlink\-trace\-<user>\-<pid>.log .
+.TP
+.B SYMLINK_FORCE_CRITICAL
+Set to
+.B 1
+to allow replacement of critical system files in non-interactive
+mode. Use with extreme caution.
+.TP
+.B DEFAULT_TARGET_DIR
+Override the default target directory for symlink creation.
+Defaults to
+.IR /usr/local/bin .
+.\"
+.SH FILES
+.TP
+.I /usr/local/bin
+Default target directory for created symlinks.
+.TP
+.I .symlink
+Configuration files defining executables to link. Searched recursively
+during scan mode
+.RB ( \-S ).
+.TP
+.I /tmp/symlink\-trace\-<user>\-<pid>.log
+Debug trace log created when debug mode is enabled.
+.TP
+.I /usr/local/share/man/man1/symlink.1
+This manual page.
+.\"
+.SH EXAMPLES
+.SS Batch Processing (Primary Use Case)
+.TP
+.B sudo symlink \-SPd /my/scripts
+Scan for .symlink files, skip prompts, and clean broken links.
+.TP
+.B sudo symlink \-SPd
+Scan the current directory.
+.TP
+.B symlink \-l /path/to/projects
+List .symlink file contents without creating links.
+.\"
+.SS Direct Linking
+.TP
+.B sudo symlink /path/to/script
+Create a symlink for a single script.
+.TP
+.B symlink \-n ./my\-script.sh
+Dry-run to preview changes.
+.\"
+.SS Debug and Diagnostics
+.TP
+.B symlink \-\-debug \-nSPd /path/to/scripts
+Debug mode with dry-run scan.
+.TP
+.B SYMLINK_DEBUG=1 symlink \-SPd
+Enable debug mode via environment variable.
+.\"
+.SS Custom Target Directory
+.TP
+.B sudo symlink \-t /opt/bin ./my\-script.sh
+Create symlink in /opt/bin instead of /usr/local/bin.
+.\"
+.SH SEE ALSO
+.BR ln (1),
+.BR sudo (8),
+.BR find (1),
+.BR realpath (1)
+.\"
+.SH AUTHORS
+Okusi Associates

@@ -5,6 +5,11 @@
 
 A Bash utility that creates symbolic links in `/usr/local/bin` for executables, making them accessible system-wide. Designed for managing scripts across multiple directories with built-in safety and batch processing.
 
+**Quick install:**
+```bash
+git clone https://github.com/Open-Technology-Foundation/symlink.git && cd symlink && sudo make install
+```
+
 ## Primary Use Case: `.symlink` Files
 
 Create a `.symlink` file in any project directory listing executables to make available system-wide:
@@ -42,13 +47,25 @@ This scans for `.symlink` files (max depth 5), creates symlinks, skips prompts f
 ## Installation
 
 ```bash
-# Clone and install
 git clone https://github.com/Open-Technology-Foundation/symlink.git
 cd symlink
-./symlink -S
+sudo make install
+```
 
-# Verify
+This installs:
+- `symlink` to `/usr/local/bin/`
+- manpage to `/usr/local/share/man/man1/`
+- bash completion to `/etc/bash_completion.d/`
+
+To uninstall:
+```bash
+sudo make uninstall
+```
+
+Verify:
+```bash
 symlink --version
+man symlink
 ```
 
 ## Usage Examples
@@ -112,6 +129,15 @@ Protects 53 critical system binaries from accidental replacement, limits scan de
 | 3 | File not found |
 | 22 | Invalid option |
 | 50 | No symlink files found |
+
+## Files
+
+| File | Description |
+|------|-------------|
+| `symlink` | Main script |
+| `symlink.1` | Manpage — full reference for options, `.symlink` format, and exit codes (`man symlink`) |
+| `symlink.bash_completion` | Bash tab-completion for all options and arguments |
+| `Makefile` | Install/uninstall targets (`make help` for details) |
 
 ## Requirements
 

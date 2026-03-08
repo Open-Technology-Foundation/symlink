@@ -184,6 +184,44 @@ test_delete_broken_symlinks_flag() {
   assert_success echo "Delete flag accepted"
 }
 
+test_no_args_shows_help() {
+  run_symlink 2>&1 || true
+  assert_contains "${TEST_OUTPUT}" "USAGE:"
+  assert_equals "1" "${TEST_EXIT_CODE}"
+}
+
+test_help_contains_sections() {
+  run_symlink -h
+  assert_contains "${TEST_OUTPUT}" ".SYMLINK FILE FORMAT:"
+  assert_contains "${TEST_OUTPUT}" "OPTIONS:"
+  assert_contains "${TEST_OUTPUT}" "SAFETY:"
+  assert_contains "${TEST_OUTPUT}" "EXIT CODES:"
+  assert_contains "${TEST_OUTPUT}" "EXAMPLES:"
+  assert_contains "${TEST_OUTPUT}" "ENVIRONMENT:"
+}
+
+test_verbose_shows_operations() {
+  local -r test_script="${TEST_SOURCE_DIR}/test.sh"
+  create_mock_executable "${test_script}"
+
+  run_symlink_sudo -v -P -t "${TEST_TARGET_DIR}" "${test_script}"
+
+  # Verbose mode should show operational info messages
+  assert_contains "${TEST_OUTPUT}" "Creating symlink"
+  assert_contains "${TEST_OUTPUT}" "Created symlink"
+}
+
+test_quiet_suppresses_operations() {
+  local -r test_script="${TEST_SOURCE_DIR}/test.sh"
+  create_mock_executable "${test_script}"
+
+  run_symlink_sudo -q -P -t "${TEST_TARGET_DIR}" "${test_script}"
+
+  # Quiet mode (VERBOSE=0) should not show info/success messages
+  assert_output_not_contains "Creating symlink"
+  assert_output_not_contains "Created symlink"
+}
+
 #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Single File Symlinking Tests
 #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -626,6 +664,63 @@ test_scan_no_symlink_files_found() {
   assert_equals "50" "${TEST_EXIT_CODE}"
 }
 
+test_scan_subdirectory_source() {
+  # .symlink file referencing source in a subdirectory
+  mkdir -p "${TEST_SOURCE_DIR}/tools"
+  local -r test_script="${TEST_SOURCE_DIR}/tools/util.sh"
+  create_mock_executable "${test_script}"
+
+  create_symlink_file "${TEST_SOURCE_DIR}/.symlink" "tools/util.sh"
+
+  run_symlink_sudo -S -P -t "${TEST_TARGET_DIR}" "${TEST_SOURCE_DIR}"
+
+  # Should create symlink using basename of source
+  assert_symlink_created "util.sh"
+}
+
+test_critical_file_scan_mode_skips() {
+  # In scan mode, critical files should be skipped without SYMLINK_FORCE_CRITICAL
+  local -r mock_bash="${TEST_SOURCE_DIR}/bash"
+  create_mock_executable "${mock_bash}"
+  create_symlink_file "${TEST_SOURCE_DIR}/.symlink" "bash"
+
+  run_symlink_sudo -S -P -v -t "${TEST_TARGET_DIR}" "${TEST_SOURCE_DIR}"
+
+  # Critical file should be skipped in scan mode
+  assert_contains "${TEST_OUTPUT}" "critical system file"
+  assert_file_not_exists "${TEST_TARGET_DIR}/bash"
+}
+
+test_critical_file_scan_mode_dry_run() {
+  # Dry-run scan should report critical files as would-skip
+  local -r mock_bash="${TEST_SOURCE_DIR}/bash"
+  create_mock_executable "${mock_bash}"
+  create_symlink_file "${TEST_SOURCE_DIR}/.symlink" "bash"
+
+  run_symlink -n -v -S -P -t "${TEST_TARGET_DIR}" "${TEST_SOURCE_DIR}"
+
+  assert_contains "${TEST_OUTPUT}" "critical file"
+  assert_file_not_exists "${TEST_TARGET_DIR}/bash"
+}
+
+test_list_nested_symlink_files() {
+  # List mode should find .symlink files in nested directories
+  local -r sub1="${TEST_SOURCE_DIR}/project1"
+  local -r sub2="${TEST_SOURCE_DIR}/project2"
+  mkdir -p "${sub1}" "${sub2}"
+
+  create_mock_executable "${sub1}/tool1.sh"
+  create_mock_executable "${sub2}/tool2.sh"
+  create_symlink_file "${sub1}/.symlink" "tool1.sh"
+  create_symlink_file "${sub2}/.symlink" "tool2.sh"
+
+  run_symlink -l "${TEST_SOURCE_DIR}"
+
+  assert_contains "${TEST_OUTPUT}" "tool1.sh"
+  assert_contains "${TEST_OUTPUT}" "tool2.sh"
+  assert_exit_code 0 echo "${TEST_EXIT_CODE}"
+}
+
 #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Path Resolution Tests
 #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -676,32 +771,31 @@ test_critical_file_bash() {
   local -r mock_bash="${TEST_SOURCE_DIR}/bash"
   create_mock_executable "${mock_bash}"
 
-  # Try to symlink with no-prompt (creates with warning)
-  run_symlink_sudo -P -v -t "${TEST_TARGET_DIR}" "${mock_bash}"
+  # Non-interactive (-P) without SYMLINK_FORCE_CRITICAL must skip critical files
+  run_symlink_sudo -P -v -t "${TEST_TARGET_DIR}" "${mock_bash}" || true
 
-  # Should create with warning in no-prompt mode
   assert_contains "${TEST_OUTPUT}" "critical system file"
-  assert_symlink_created "bash"
+  assert_file_not_exists "${TEST_TARGET_DIR}/bash"
 }
 
 test_critical_file_sh() {
   local -r mock_sh="${TEST_SOURCE_DIR}/sh"
   create_mock_executable "${mock_sh}"
 
-  run_symlink_sudo -P -v -t "${TEST_TARGET_DIR}" "${mock_sh}"
+  run_symlink_sudo -P -v -t "${TEST_TARGET_DIR}" "${mock_sh}" || true
 
   assert_contains "${TEST_OUTPUT}" "critical system file"
-  assert_symlink_created "sh"
+  assert_file_not_exists "${TEST_TARGET_DIR}/sh"
 }
 
 test_critical_file_sudo() {
   local -r mock_sudo="${TEST_SOURCE_DIR}/sudo"
   create_mock_executable "${mock_sudo}"
 
-  run_symlink_sudo -P -v -t "${TEST_TARGET_DIR}" "${mock_sudo}"
+  run_symlink_sudo -P -v -t "${TEST_TARGET_DIR}" "${mock_sudo}" || true
 
   assert_contains "${TEST_OUTPUT}" "critical system file"
-  assert_symlink_created "sudo"
+  assert_file_not_exists "${TEST_TARGET_DIR}/sudo"
 }
 
 test_force_critical_with_env_var() {
@@ -765,6 +859,41 @@ test_debug_env_var() {
   fi
 }
 
+test_debug_trace_content() {
+  local -r test_script="${TEST_SOURCE_DIR}/test.sh"
+  create_mock_executable "${test_script}"
+
+  # Clean old traces first
+  rm -f /tmp/symlink-trace-* 2>/dev/null || true
+
+  run_symlink_sudo --debug -P -t "${TEST_TARGET_DIR}" "${test_script}"
+
+  # Find and verify trace file content
+  local trace_file=""
+  for f in /tmp/symlink-trace-*; do
+    [[ -f "$f" ]] && { trace_file="$f"; break; }
+  done
+
+  assert_not_empty "${trace_file}" "Trace file should exist"
+  local trace_content
+  trace_content=$(cat "$trace_file")
+  assert_contains "${trace_content}" "TRACE: Script started"
+  assert_contains "${trace_content}" "TRACE: Execution completed"
+}
+
+test_symlink_owner_matches_source() {
+  local -r test_script="${TEST_SOURCE_DIR}/test.sh"
+  create_mock_executable "${test_script}"
+
+  run_symlink_sudo -P -t "${TEST_TARGET_DIR}" "${test_script}"
+
+  # Symlink owner should match source file owner
+  local source_owner target_owner
+  source_owner=$(stat -c '%U' "${test_script}")
+  target_owner=$(stat -c '%U' "${TEST_TARGET_DIR}/test.sh")
+  assert_equals "${source_owner}" "${target_owner}" "Symlink owner should match source"
+}
+
 #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Exit Code Tests
 #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -781,8 +910,8 @@ test_exit_code_success() {
 test_exit_code_file_not_found() {
   run_symlink "${TEST_SOURCE_DIR}/nonexistent.sh" || true
 
-  # Returns 1 (general error) not 3
-  assert_equals "1" "${TEST_EXIT_CODE}"
+  # create_symlink returns 3 (not found), now propagated correctly
+  assert_equals "3" "${TEST_EXIT_CODE}"
 }
 
 test_exit_code_invalid_option() {
@@ -795,6 +924,13 @@ test_exit_code_no_symlink_files() {
   run_symlink -S "${TEST_SOURCE_DIR}" || true
 
   assert_equals "50" "${TEST_EXIT_CODE}"
+}
+
+test_target_dir_requires_argument() {
+  run_symlink -t || true
+
+  assert_equals "22" "${TEST_EXIT_CODE}"
+  assert_contains "${TEST_OUTPUT}" "requires an argument"
 }
 
 #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1006,6 +1142,8 @@ test_summary_dry_run_format() {
 #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 # Option parsing
+test "No args shows help" test_no_args_shows_help
+test "Help contains all sections" test_help_contains_sections
 test "Help flag (short)" test_help_short
 test "Help flag (long)" test_help_long
 test "Version flag (short)" test_version_short
@@ -1016,7 +1154,9 @@ test "Dry-run flag (long)" test_dry_run_long
 test "Target directory (short)" test_target_dir_short
 test "Target directory (long)" test_target_dir_long
 test "Verbose flag" test_verbose_short
+test "Verbose shows operations" test_verbose_shows_operations
 test "Quiet flag" test_quiet_short
+test "Quiet suppresses operations" test_quiet_suppresses_operations
 test "No-prompt flag" test_no_prompt_short
 test "Aggregated short options" test_aggregated_short_options
 test "List mode flag" test_list_mode
@@ -1060,6 +1200,10 @@ test "Scan nested .symlink files" test_scan_nested_symlink_files
 test "Scan respects max depth limit" test_scan_respects_max_depth
 test "List mode shows .symlink files" test_list_mode_shows_symlink_files
 test "Scan: no .symlink files found" test_scan_no_symlink_files_found
+test "Scan: subdirectory source path" test_scan_subdirectory_source
+test "Scan: critical file skipped (no force)" test_critical_file_scan_mode_skips
+test "Scan: critical file dry-run skip" test_critical_file_scan_mode_dry_run
+test "List mode: nested directories" test_list_nested_symlink_files
 
 # Path resolution
 test "Resolve relative path" test_resolve_relative_path
@@ -1075,12 +1219,15 @@ test "Force critical file with env var" test_force_critical_with_env_var
 # Debug mode
 test "Debug flag creates trace file" test_debug_flag_creates_trace
 test "Debug via environment variable" test_debug_env_var
+test "Debug trace file content" test_debug_trace_content
+test "Symlink owner matches source" test_symlink_owner_matches_source
 
 # Exit codes
 test "Exit code 0 on success" test_exit_code_success
 test "Exit code 3 for file not found" test_exit_code_file_not_found
 test "Exit code 22 for invalid option" test_exit_code_invalid_option
 test "Exit code 50 for no .symlink files" test_exit_code_no_symlink_files
+test "Target dir requires argument" test_target_dir_requires_argument
 
 # Edge cases
 test "Handle empty custom name" test_handle_empty_custom_name

@@ -4,7 +4,7 @@ This document describes the comprehensive test suite for the `symlink` script.
 
 ## Overview
 
-The test suite provides extensive coverage of all `symlink` functionality with approximately 70+ organized test cases covering:
+The test suite provides extensive coverage of all `symlink` functionality with 84 organized test cases covering:
 
 - Option parsing and validation
 - Single file symlinking operations
@@ -74,7 +74,7 @@ The test harness will display:
 Example output:
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Running 70 test(s)
+Running 84 test(s)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ✓ Help flag (short)
@@ -87,8 +87,8 @@ Running 70 test(s)
 Test Summary
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Total:   70
-Passed:  70
+Total:   84
+Passed:  84
 Failed:  0
 Skipped: 0
 
@@ -100,12 +100,14 @@ Skipped: 0
 
 Tests are organized into the following categories:
 
-### 1. Option Parsing Tests (16 tests)
+### 1. Option Parsing Tests (20 tests)
+- No arguments (shows help, exits 1)
+- Help output contains all sections
 - Help and version flags (short/long)
 - Invalid option handling
 - Dry-run mode flags
 - Target directory specification
-- Verbose/quiet flags
+- Verbose/quiet flags and output verification
 - No-prompt flag
 - Aggregated short options
 - List and scan mode flags
@@ -135,15 +137,24 @@ Tests are organized into the following categories:
 - Preserving valid symlinks
 - Dry-run preview of cleanup
 
-### 5. .symlink File Processing Tests (8 tests)
+### 5. .symlink File Processing Tests (17 tests)
 - Scanning single .symlink file
 - Custom names in .symlink files
 - Comment handling
 - Blank line handling
+- Inline comment handling
+- Inline comments with custom name
+- Multiple link names per entry
+- Multiple link names with inline comment
+- Indented comments
 - Nested .symlink file discovery
 - Max depth enforcement
 - List mode display
+- List mode nested directories
 - No files found error
+- Subdirectory source paths
+- Critical file skipped in scan mode
+- Critical file dry-run skip in scan mode
 
 ### 6. Path Resolution Tests (3 tests)
 - Relative path resolution
@@ -154,9 +165,11 @@ Tests are organized into the following categories:
 - Protection for bash, sh, sudo
 - Force override with environment variable
 
-### 8. Debug Mode Tests (2 tests)
+### 8. Debug Mode Tests (4 tests)
 - Debug flag trace file creation
 - Debug via environment variable
+- Debug trace file content verification
+- Symlink owner matches source file
 
 ### 9. Exit Code Tests (4 tests)
 - Success (0)
@@ -164,12 +177,16 @@ Tests are organized into the following categories:
 - Invalid option (22)
 - No .symlink files (50)
 
-### 10. Edge Cases Tests (5 tests)
+### 10. Edge Cases Tests (9 tests)
 - Empty custom names
 - Scripts without extensions
 - Hidden files
 - Multiple files in one command
 - Windows line endings in .symlink files
+- Escaped spaces in .symlink source paths
+- Escaped space with custom name
+- Escaped space in directory path
+- Multiple escaped spaces
 
 ### 11. Integration Workflow Tests (3 tests)
 - Admin full scan workflow
@@ -388,19 +405,19 @@ Current test coverage:
 
 | Area | Test Count | Coverage |
 |------|------------|----------|
-| Option Parsing | 16 | Comprehensive |
+| Option Parsing | 20 | Comprehensive |
 | File Operations | 9 | Comprehensive |
 | Dry-Run Mode | 4 | Complete |
 | Broken Symlinks | 4 | Complete |
-| .symlink Processing | 8 | Comprehensive |
+| .symlink Processing | 17 | Comprehensive |
 | Path Resolution | 3 | Core cases |
 | Critical Files | 4 | Complete |
-| Debug Mode | 2 | Core cases |
+| Debug Mode | 4 | Comprehensive |
 | Exit Codes | 4 | Key codes |
-| Edge Cases | 5 | Common cases |
+| Edge Cases | 9 | Common cases |
 | Integration | 3 | Key workflows |
 | Summary | 3 | Core cases |
-| **Total** | **70+** | **High** |
+| **Total** | **84** | **High** |
 
 ### Not Yet Covered
 
@@ -448,9 +465,9 @@ When adding tests:
 
 | File | Purpose | Lines |
 |------|---------|-------|
-| `test-harness` | Test framework | ~450 |
-| `test-helpers` | Test utilities | ~350 |
-| `test-symlink` | Test suite | ~800 |
+| `test-harness` | Test framework | ~510 |
+| `test-helpers` | Test utilities | ~420 |
+| `test-symlink` | Test suite | ~1260 |
 | `README-TESTING.md` | Documentation | This file |
 
 ## License
@@ -468,6 +485,6 @@ For issues with the test suite:
 
 ---
 
-**Last Updated**: 2025-11-01
+**Last Updated**: 2026-03-08
 **Test Suite Version**: 1.0.0
 **symlink Version**: 1.4.0

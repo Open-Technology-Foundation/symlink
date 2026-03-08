@@ -43,7 +43,7 @@ This scans for `.symlink` files (max depth 5), creates symlinks, skips prompts f
 
 ```bash
 # Clone and install
-git clone https://github.com/user/symlink.git
+git clone https://github.com/Open-Technology-Foundation/symlink.git
 cd symlink
 ./symlink -S
 
@@ -78,13 +78,13 @@ symlink --debug -nSPd /path/to/scripts
 | Option | Description |
 |--------|-------------|
 | `-S, --scan-symlink` | Scan for `.symlink` files and process them |
-| `-P, --no-prompt` | Skip confirmation prompts for existing symlinks |
+| `-P, --no-prompt` | Skip confirmation prompts |
 | `-d, --delete-broken-symlinks` | Clean up broken symlinks in target directory |
 | `-t, --target-dir DIR` | Custom target directory (default: `/usr/local/bin`) |
 | `-l, --list` | List `.symlink` file contents only |
 | `-n, --dry-run` | Preview changes without executing |
 | `-v, --verbose` | Verbose output |
-| `-q, --quiet` | Suppress informational messages |
+| `-q, --quiet` | Suppress verbose output (opposite of `-v`) |
 | `-D, --debug` | Debug mode with trace logging |
 | `-h, --help` | Display help |
 | `-V, --version` | Show version |
@@ -93,7 +93,7 @@ Options can be combined: `-SPd` for no-prompt scan with cleanup.
 
 ## Safety Features
 
-Protects 53 critical system binaries from accidental replacement, limits scan depth to 5 levels, applies timeouts during path resolution, and auto-detects interactive mode for appropriate prompting.
+Protects 53 critical system binaries from accidental replacement, limits scan depth to 5 levels, applies 2s timeout during symlink path resolution, and auto-detects interactive mode for appropriate prompting.
 
 ## Environment Variables
 

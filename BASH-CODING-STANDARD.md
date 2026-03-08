@@ -1,1 +1,1 @@
-/ai/scripts/Okusi/bash-coding-standard/BASH-CODING-STANDARD.md
+/usr/local/share/yatti/bash-coding-standard/data/BASH-CODING-STANDARD.md

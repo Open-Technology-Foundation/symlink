@@ -1,33 +1,49 @@
-# Makefile for symlink - create and manage /usr/local/bin symlinks
+# Makefile - Install symlink
+# BCS1212 compliant
 
 PREFIX  ?= /usr/local
-BINDIR   = $(PREFIX)/bin
-MANDIR   = $(PREFIX)/share/man/man1
-COMPDIR  = /etc/bash_completion.d
+BINDIR  ?= $(PREFIX)/bin
+MANDIR  ?= $(PREFIX)/share/man/man1
+COMPDIR ?= /etc/bash_completion.d
+DESTDIR ?=
 
-.PHONY: help install uninstall check test
+.PHONY: all install uninstall check test help
 
-help: ## Show available targets
-	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | \
-		awk 'BEGIN {FS = ":.*## "}; {printf "  %-15s %s\n", $$1, $$2}'
+all: help
 
-install: ## Install symlink, manpage, and completion (requires sudo)
-	install -d $(BINDIR)
-	install -d $(MANDIR)
-	install -d $(COMPDIR)
-	install -m 755 symlink $(BINDIR)/symlink
-	install -m 644 symlink.1 $(MANDIR)/symlink.1
-	install -m 644 symlink.bash_completion $(COMPDIR)/symlink
+install:
+	install -d $(DESTDIR)$(BINDIR)
+	install -m 755 symlink $(DESTDIR)$(BINDIR)/symlink
+	install -d $(DESTDIR)$(MANDIR)
+	install -m 644 symlink.1 $(DESTDIR)$(MANDIR)/symlink.1
+	@if [ -d $(DESTDIR)$(COMPDIR) ]; then \
+	  install -m 644 symlink.bash_completion $(DESTDIR)$(COMPDIR)/symlink; \
+	fi
+	@if [ -z "$(DESTDIR)" ]; then $(MAKE) --no-print-directory check; fi
 
-uninstall: ## Remove installed files (requires sudo)
-	rm -f $(BINDIR)/symlink
-	rm -f $(MANDIR)/symlink.1
-	rm -f $(COMPDIR)/symlink
+uninstall:
+	rm -f $(DESTDIR)$(BINDIR)/symlink
+	rm -f $(DESTDIR)$(MANDIR)/symlink.1
+	rm -f $(DESTDIR)$(COMPDIR)/symlink
 
-check: ## Run shellcheck
-	shellcheck -x -e SC2015 symlink
+check:
+	@command -v symlink >/dev/null 2>&1 \
+	  && echo 'symlink: OK' \
+	  || echo 'symlink: NOT FOUND (check PATH)'
 
-test: ## Run test suite (requires sudo)
+test:
 	sudo ./test-symlink
 
-#fin
+help:
+	@echo 'Usage: make [target]'
+	@echo ''
+	@echo 'Targets:'
+	@echo '  install     Install to $(PREFIX)'
+	@echo '  uninstall   Remove installed files'
+	@echo '  check       Verify installation'
+	@echo '  test        Run test suite (requires sudo)'
+	@echo '  help        Show this message'
+	@echo ''
+	@echo 'Install from GitHub:'
+	@echo '  git clone https://github.com/Open-Technology-Foundation/symlink.git'
+	@echo '  cd symlink && sudo make install'

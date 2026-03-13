@@ -88,7 +88,7 @@ die() { (($# < 2)) || error "${@:2}"; exit "${1:-0}"; }
 yn() {
   ((PROMPT)) || return 0
   local -- REPLY
-  read -r -n 1 -p "$SCRIPT_NAME: ${YELLOW}▲${NC} ${1:-'Continue?'} y/n "
+  read -r -n 1 -p "$SCRIPT_NAME: ${YELLOW}▲${NC} ${1:-'Continue?'} y/n " </dev/tty
   echo
   [[ ${REPLY,,} == y ]]
 }
@@ -195,7 +195,7 @@ HELP
 # --------------------------------------------------------------------------------
 # String manipulation functions
 # --------------------------------------------------------------------------------
-# trim STRING - Remove leading/trailing whitespace; outputs to stdout
+# trim STRING - Remove leading/trailing blanks (spaces and tabs); outputs to stdout
 trim() {
   local -- v="$*"
   v="${v#"${v%%[![:blank:]]*}"}"
@@ -297,7 +297,7 @@ create_symlink() {
 
     if ((PROMPT)); then
       # Interactive: prompt user
-      if ! yn "Are you ABSOLUTELY SURE you want to replace it?"; then
+      if ! yn "Are you ABSOLUTELY SURE you want to replace ${target_name@Q}?"; then
         info "Skipping ${target_name@Q} (critical system file)"
         SKIPPED_LINKS+=("$source_path → $target_path (critical file)")
         return 0
@@ -340,21 +340,23 @@ create_symlink() {
 
   # Handle existing symlink
   if [[ -L "$target_path" ]]; then
-    info "Symlink exists ${target_path@Q}"
-
-    change_symlink_owner_perms "$source_abs_path" "$target_path"
-
-    # Check if it's already pointing to our target
     local -- current_target
     current_target=$(realpath -- "$target_path" 2>/dev/null)
+
+    # Already pointing to our target — nothing to do
     if [[ "$current_target" == "$source_abs_path" ]]; then
       info "Symlink already points to ${source_abs_path@Q}, skipping"
+      change_symlink_owner_perms "$source_abs_path" "$target_path"
       SKIPPED_LINKS+=("$source_path → $target_path (already exists)")
       return 0
     fi
 
-    if ((PROMPT)); then
-      if ! yn "Remove existing symlink?"; then
+    # Broken symlink — replace silently (no value in keeping it)
+    if [[ -z "$current_target" ]]; then
+      info "Replacing broken symlink ${target_name@Q}"
+    elif ((PROMPT)); then
+      # Live symlink pointing elsewhere — prompt user
+      if ! yn "Replace existing symlink ${target_name@Q} → ${current_target@Q}?"; then
         info "Skipping ${target_name@Q}"
         SKIPPED_LINKS+=("$source_path → $target_path (user skipped)")
         return 0
@@ -375,7 +377,7 @@ create_symlink() {
   if [[ -e "$target_path" ]]; then
     info "File exists ${target_path@Q}"
     if ((PROMPT)); then
-      if ! yn "Remove existing file?"; then
+      if ! yn "Remove existing file ${target_name@Q}?"; then
         info "Skipping ${target_name@Q}"
         SKIPPED_LINKS+=("$source_path → $target_path (user skipped)")
         return 0
@@ -486,7 +488,7 @@ delete_broken_symlinks() {
 # --------------------------------------------------------------------------------
 # Summary and reporting
 # --------------------------------------------------------------------------------
-# print_summary - Outputs counts from global arrays; details shown if VERBOSE=1
+# print_summary - Outputs counts from global arrays; details if VERBOSE=1; errors always shown
 print_summary() {
   # Format output differently for dry run mode
   if ((DRY_RUN)); then

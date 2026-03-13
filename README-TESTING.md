@@ -4,7 +4,7 @@ This document describes the comprehensive test suite for the `symlink` script.
 
 ## Overview
 
-The test suite provides extensive coverage of all `symlink` functionality with 84 organized test cases covering:
+The test suite provides extensive coverage of all `symlink` functionality with 85 organized test cases covering:
 
 - Option parsing and validation
 - Single file symlinking operations
@@ -74,7 +74,7 @@ The test harness will display:
 Example output:
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Running 84 test(s)
+Running 85 test(s)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ✓ Help flag (short)
@@ -87,8 +87,8 @@ Running 84 test(s)
 Test Summary
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Total:   84
-Passed:  84
+Total:   85
+Passed:  85
 Failed:  0
 Skipped: 0
 
@@ -171,11 +171,12 @@ Tests are organized into the following categories:
 - Debug trace file content verification
 - Symlink owner matches source file
 
-### 9. Exit Code Tests (4 tests)
+### 9. Exit Code Tests (5 tests)
 - Success (0)
 - File not found (3)
 - Invalid option (22)
 - No .symlink files (50)
+- Target dir requires argument (22)
 
 ### 10. Edge Cases Tests (9 tests)
 - Empty custom names
@@ -413,11 +414,11 @@ Current test coverage:
 | Path Resolution | 3 | Core cases |
 | Critical Files | 4 | Complete |
 | Debug Mode | 4 | Comprehensive |
-| Exit Codes | 4 | Key codes |
+| Exit Codes | 5 | Key codes |
 | Edge Cases | 9 | Common cases |
 | Integration | 3 | Key workflows |
 | Summary | 3 | Core cases |
-| **Total** | **84** | **High** |
+| **Total** | **85** | **High** |
 
 ### Not Yet Covered
 
@@ -466,8 +467,8 @@ When adding tests:
 | File | Purpose | Lines |
 |------|---------|-------|
 | `test-harness` | Test framework | ~510 |
-| `test-helpers` | Test utilities | ~420 |
-| `test-symlink` | Test suite | ~1260 |
+| `test-helpers` | Test utilities | ~423 |
+| `test-symlink` | Test suite | ~1267 |
 | `README-TESTING.md` | Documentation | This file |
 
 ## License

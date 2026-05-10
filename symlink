@@ -16,7 +16,7 @@ declare -rx PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
   exit "$?"
 }
 
-declare -r VERSION=1.4.0
+declare -r VERSION=1.4.1
 declare -- SCRIPT_PATH
 SCRIPT_PATH=$(realpath -- "$0")
 readonly SCRIPT_PATH
@@ -417,16 +417,17 @@ create_symlink() {
 # Copies owner, group, and mtime from source to symlink (not file mode bits)
 change_symlink_owner_perms() {
   local -- source_abs_path="$1" target_path="$2"
-  # Get owner and group of the source file
-  local -- owner group
-  owner=$(stat -c '%U' "$source_abs_path")
-  group=$(stat -c '%G' "$source_abs_path")
+  # Get numeric owner/group — robust against missing /etc/passwd or
+  # /etc/group entries on freshly-extracted archives (UNKNOWN would break
+  # symbolic chown on hosts where a uid/gid has no name mapping yet).
+  local -- uidgid
+  uidgid=$(stat -c '%u:%g' "$source_abs_path")
   # Copy mtime from source to symlink
   debug "touch -h -r $source_abs_path $target_path"
   touch -h -r "$source_abs_path" "$target_path"
-  # Change ownership of the symlink to match the source
-  debug "chown -h $owner:$group $target_path"
-  chown -h "$owner":"$group" "$target_path"
+  # Change ownership of the symlink to match the source (numeric)
+  debug "chown -h $uidgid $target_path"
+  chown -h "$uidgid" "$target_path"
   return 0
 }
 

@@ -19,7 +19,7 @@ declare -rx PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
   exit "$?"
 }
 
-declare -r VERSION=1.4.1
+declare -r VERSION=1.5.0
 declare -- SCRIPT_PATH
 SCRIPT_PATH=$(realpath -- "$0")
 readonly SCRIPT_PATH

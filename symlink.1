@@ -1,7 +1,7 @@
 .\" Symlink Manual Page
 .\" Generated: 2026-03-08
 .\"
-.TH SYMLINK 1 "March 2026" "symlink 1.4.1" "User Commands"
+.TH SYMLINK 1 "May 2026" "symlink 1.5.0" "User Commands"
 .\"
 .SH NAME
 symlink \- create symlinks in /usr/local/bin for executables
@@ -258,8 +258,10 @@ Set to
 .B 1
 to enable debug mode. Equivalent to the
 .B \-D
-option. Writes trace output to
-.IR /tmp/symlink\-trace\-<user>\-<pid>.log .
+option. Writes trace output to a
+.BR mktemp (1)
+file in
+.IR $TMPDIR " (default " /tmp ).
 .TP
 .B SYMLINK_FORCE_CRITICAL
 Set to
@@ -282,8 +284,10 @@ Configuration files defining executables to link. Searched recursively
 during scan mode
 .RB ( \-S ).
 .TP
-.I /tmp/symlink\-trace\-<user>\-<pid>.log
-Debug trace log created when debug mode is enabled.
+.IR $TMPDIR /symlink\-trace\-*.log
+Debug trace log (created via
+.BR mktemp (1))
+when debug mode is enabled.
 .TP
 .I /usr/local/share/man/man1/symlink.1
 This manual page.

@@ -46,15 +46,19 @@ test_help_long() {
 }
 
 test_version_short() {
+  local -- expected
+  expected=$(sed -n 's/^declare -r VERSION=//p' "${SYMLINK_BIN}")
   run_symlink -V
   assert_exit_code 0 echo "${TEST_EXIT_CODE}"
-  assert_contains "${TEST_OUTPUT}" "1.4.0"
+  assert_contains "${TEST_OUTPUT}" "${expected}"
 }
 
 test_version_long() {
+  local -- expected
+  expected=$(sed -n 's/^declare -r VERSION=//p' "${SYMLINK_BIN}")
   run_symlink --version
   assert_exit_code 0 echo "${TEST_EXIT_CODE}"
-  assert_contains "${TEST_OUTPUT}" "1.4.0"
+  assert_contains "${TEST_OUTPUT}" "${expected}"
 }
 
 test_invalid_option() {
@@ -113,9 +117,9 @@ test_verbose_short() {
 
   run_symlink_sudo -v -t "${TEST_TARGET_DIR}" "${test_script}"
 
-  # Verbose mode should show more output
-  # Check for typical verbose messages
-  assert_success echo "Verbose flag accepted"
+  # Verbose mode emits the per-file "Creating symlink" detail line
+  assert_contains "${TEST_OUTPUT}" "Creating symlink"
+  assert_symlink_to "${TEST_TARGET_DIR}/test.sh" "${test_script}"
 }
 
 test_quiet_short() {
@@ -124,8 +128,9 @@ test_quiet_short() {
 
   run_symlink_sudo -q -t "${TEST_TARGET_DIR}" "${test_script}"
 
-  # Quiet mode should suppress some output
-  assert_success echo "Quiet flag accepted"
+  # Quiet mode suppresses the per-file detail but still creates the link
+  assert_output_not_contains "Creating symlink"
+  assert_symlink_to "${TEST_TARGET_DIR}/test.sh" "${test_script}"
 }
 
 test_no_prompt_short() {
@@ -134,8 +139,9 @@ test_no_prompt_short() {
 
   run_symlink_sudo -P -t "${TEST_TARGET_DIR}" "${test_script}"
 
-  # Should not prompt for anything
-  assert_success echo "No-prompt flag accepted"
+  # No prompt string emitted, and the link is created without interaction
+  assert_output_not_contains "y/n"
+  assert_symlink_to "${TEST_TARGET_DIR}/test.sh" "${test_script}"
 }
 
 test_aggregated_short_options() {
@@ -174,14 +180,17 @@ test_scan_mode() {
 }
 
 test_delete_broken_symlinks_flag() {
-  # Create a broken symlink in target
+  local -r noop="${TEST_SOURCE_DIR}/noop.sh"
+  create_mock_executable "${noop}"
+
+  # Dry-run with -d must REPORT but NOT delete the broken symlink
   create_broken_symlink "${TEST_TARGET_DIR}/broken-link"
+  run_symlink_sudo -d -n -t "${TEST_TARGET_DIR}" "${noop}"
+  [[ -L "${TEST_TARGET_DIR}/broken-link" ]] || fail "dry-run -d deleted the broken symlink"
 
-  run_symlink_sudo -d -t "${TEST_TARGET_DIR}" -n /nonexistent 2>/dev/null || true
-
-  # In dry-run, should report but not delete
-  # Without dry-run, would delete
-  assert_success echo "Delete flag accepted"
+  # Real run with -d removes the broken symlink
+  run_symlink_sudo -d -t "${TEST_TARGET_DIR}" "${noop}"
+  [[ ! -L "${TEST_TARGET_DIR}/broken-link" ]] || fail "real -d did not delete the broken symlink"
 }
 
 test_no_args_shows_help() {
@@ -287,10 +296,39 @@ test_replace_existing_regular_file() {
   # Create regular file in target
   echo "regular file" > "${TEST_TARGET_DIR}/test.sh"
 
-  # Replace with symlink (no prompt)
-  run_symlink_sudo -P -t "${TEST_TARGET_DIR}" "${test_script}"
+  # Replace with symlink — non-interactive replacement requires --force
+  run_symlink_sudo -P --force -t "${TEST_TARGET_DIR}" "${test_script}"
 
   assert_symlink_to "${TEST_TARGET_DIR}/test.sh" "${test_script}"
+}
+
+test_skip_existing_regular_file_without_force() {
+  local -r test_script="${TEST_SOURCE_DIR}/test.sh"
+  create_mock_executable "${test_script}"
+
+  # Pre-existing non-symlink file must NOT be clobbered without --force
+  echo "regular file" > "${TEST_TARGET_DIR}/test.sh"
+
+  run_symlink_sudo -P -t "${TEST_TARGET_DIR}" "${test_script}"
+
+  # Still a regular file with original content, not a symlink
+  assert_file_exists "${TEST_TARGET_DIR}/test.sh"
+  [[ ! -L "${TEST_TARGET_DIR}/test.sh" ]] || fail "non-symlink file was clobbered without --force"
+  assert_contains "$(cat "${TEST_TARGET_DIR}/test.sh")" "regular file"
+}
+
+test_backup_replace_regular_file() {
+  local -r test_script="${TEST_SOURCE_DIR}/test.sh"
+  create_mock_executable "${test_script}"
+
+  echo "regular file" > "${TEST_TARGET_DIR}/test.sh"
+
+  # --backup preserves the clobbered file as NAME.bak~
+  run_symlink_sudo -P --force --backup -t "${TEST_TARGET_DIR}" "${test_script}"
+
+  assert_symlink_to "${TEST_TARGET_DIR}/test.sh" "${test_script}"
+  assert_file_exists "${TEST_TARGET_DIR}/test.sh.bak~"
+  assert_contains "$(cat "${TEST_TARGET_DIR}/test.sh.bak~")" "regular file"
 }
 
 test_nonexistent_source_file() {
@@ -813,29 +851,23 @@ test_force_critical_with_env_var() {
 # Debug Mode Tests
 #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+# trace_file_from_output - echo the trace path the script logged to stderr.
+# Parsing the actual path (not globbing /tmp) keeps these tests hermetic and
+# immune to stale root-owned trace files from earlier runs.
+trace_file_from_output() {
+  grep -oE '/[^ )]*/symlink-trace-[A-Za-z0-9._-]+\.log' <<< "${TEST_OUTPUT}" | head -1
+}
+
 test_debug_flag_creates_trace() {
   local -r test_script="${TEST_SOURCE_DIR}/test.sh"
   create_mock_executable "${test_script}"
 
   run_symlink_sudo --debug -P -t "${TEST_TARGET_DIR}" "${test_script}"
 
-  # Check for debug trace file
-  local -r trace_pattern="/tmp/symlink-trace-*"
-  local trace_found=0
-
-  # shellcheck disable=SC2086
-  for file in ${trace_pattern}; do
-    if [[ -f "${file}" ]]; then
-      trace_found=1
-      break
-    fi
-  done
-
-  if ((trace_found == 1)); then
-    assert_success echo "Debug trace file created"
-  else
-    fail "Debug trace file not found"
-  fi
+  local trace_file
+  trace_file=$(trace_file_from_output)
+  [[ -n "${trace_file}" && -f "${trace_file}" ]] \
+    || fail "Debug trace file not found (output had no trace path)"
 }
 
 test_debug_env_var() {
@@ -844,35 +876,21 @@ test_debug_env_var() {
 
   SYMLINK_DEBUG=1 run_symlink_sudo -P -t "${TEST_TARGET_DIR}" "${test_script}"
 
-  # Should enable debug mode
-  # Check for trace file
-  local trace_found=0
-  for file in /tmp/symlink-trace-*; do
-    if [[ -f "${file}" ]]; then
-      trace_found=1
-      break
-    fi
-  done
-
-  if ((trace_found == 1)); then
-    assert_success echo "Debug mode enabled via env var"
-  fi
+  local trace_file
+  trace_file=$(trace_file_from_output)
+  [[ -n "${trace_file}" && -f "${trace_file}" ]] \
+    || fail "SYMLINK_DEBUG=1 did not create a trace file"
 }
 
 test_debug_trace_content() {
   local -r test_script="${TEST_SOURCE_DIR}/test.sh"
   create_mock_executable "${test_script}"
 
-  # Clean old traces first
-  rm -f /tmp/symlink-trace-* 2>/dev/null || true
-
   run_symlink_sudo --debug -P -t "${TEST_TARGET_DIR}" "${test_script}"
 
-  # Find and verify trace file content
-  local trace_file=""
-  for f in /tmp/symlink-trace-*; do
-    [[ -f "$f" ]] && { trace_file="$f"; break; }
-  done
+  # Find and verify trace file content (path parsed from the script's own log)
+  local trace_file
+  trace_file=$(trace_file_from_output)
 
   assert_not_empty "${trace_file}" "Trace file should exist"
   local trace_content
@@ -892,6 +910,75 @@ test_symlink_owner_matches_source() {
   source_owner=$(stat -c '%U' "${test_script}")
   target_owner=$(stat -c '%U' "${TEST_TARGET_DIR}/test.sh")
   assert_equals "${source_owner}" "${target_owner}" "Symlink owner should match source"
+}
+
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Critical-file protection tests (the historical auto-confirm bug site)
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+test_critical_file_noninteractive_skips() {
+  # Source basename 'ls' is a hard-protected critical name
+  local -r src="${TEST_SOURCE_DIR}/ls"
+  create_mock_executable "${src}"
+
+  run_symlink_sudo -P -t "${TEST_TARGET_DIR}" "${src}"
+
+  # Non-interactive without override MUST NOT link a critical name
+  [[ ! -L "${TEST_TARGET_DIR}/ls" ]] || fail "critical file linked non-interactively without override"
+  assert_contains "${TEST_OUTPUT}" "appears to be a critical system file"
+}
+
+test_critical_file_interactive_reject() {
+  command -v script >/dev/null 2>&1 || { skip "script(1) not available for pty test"; return 0; }
+  local -r src="${TEST_SOURCE_DIR}/ls"
+  create_mock_executable "${src}"
+
+  # Feed 'n' at the confirmation prompt
+  run_symlink_pty 'n' -t "${TEST_TARGET_DIR}" "${src}"
+
+  [[ ! -L "${TEST_TARGET_DIR}/ls" ]] || fail "critical file linked despite 'n' response"
+  assert_contains "${TEST_OUTPUT}" "appears to be a critical system file"
+}
+
+test_critical_file_interactive_confirm() {
+  command -v script >/dev/null 2>&1 || { skip "script(1) not available for pty test"; return 0; }
+  local -r src="${TEST_SOURCE_DIR}/ls"
+  create_mock_executable "${src}"
+
+  # Feed 'y' at the confirmation prompt
+  run_symlink_pty 'y' -t "${TEST_TARGET_DIR}" "${src}"
+
+  assert_symlink_to "${TEST_TARGET_DIR}/ls" "${src}"
+  assert_contains "${TEST_OUTPUT}" "explicitly confirmed"
+}
+
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# PATH-shadow advisory tests (non-critical names that override a PATH command)
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+test_shadow_warns_noninteractive() {
+  # 'sort' exists on PATH and is NOT a hard-protected critical name
+  command -v sort >/dev/null 2>&1 || { skip "no sort on PATH"; return 0; }
+  local -r src="${TEST_SOURCE_DIR}/sort"
+  create_mock_executable "${src}"
+
+  run_symlink_sudo -P -t "${TEST_TARGET_DIR}" "${src}"
+
+  # Non-blocking: the link IS created but the shadow is surfaced
+  assert_symlink_to "${TEST_TARGET_DIR}/sort" "${src}"
+  assert_contains "${TEST_OUTPUT}" "will shadow"
+}
+
+test_shadow_interactive_reject() {
+  command -v script >/dev/null 2>&1 || { skip "script(1) not available for pty test"; return 0; }
+  command -v sort >/dev/null 2>&1 || { skip "no sort on PATH"; return 0; }
+  local -r src="${TEST_SOURCE_DIR}/sort"
+  create_mock_executable "${src}"
+
+  run_symlink_pty 'n' -t "${TEST_TARGET_DIR}" "${src}"
+
+  [[ ! -L "${TEST_TARGET_DIR}/sort" ]] || fail "shadow link created despite 'n' response"
+  assert_contains "${TEST_OUTPUT}" "will shadow"
 }
 
 #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1083,18 +1170,11 @@ test_workflow_debug_comprehensive() {
   # Should be dry-run
   assert_contains "${TEST_OUTPUT}" "No changes were made"
 
-  # Check for debug trace
-  local trace_found=0
-  for file in /tmp/symlink-trace-*; do
-    if [[ -f "${file}" ]]; then
-      trace_found=1
-      break
-    fi
-  done
-
-  if ((trace_found == 1)); then
-    assert_success echo "Debug trace created in comprehensive workflow"
-  fi
+  # Check for debug trace (path parsed from the script's own log output)
+  local trace_file
+  trace_file=$(trace_file_from_output)
+  [[ -n "${trace_file}" && -f "${trace_file}" ]] \
+    || fail "comprehensive workflow produced no debug trace"
 }
 
 #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1168,7 +1248,9 @@ test "Create new symlink" test_create_new_symlink
 test "Create symlink with custom name" test_create_symlink_with_custom_name
 test "Skip existing same symlink" test_skip_existing_same_symlink
 test "Replace existing different symlink" test_replace_existing_different_symlink
-test "Replace existing regular file" test_replace_existing_regular_file
+test "Replace existing regular file (--force)" test_replace_existing_regular_file
+test "Skip existing regular file without --force" test_skip_existing_regular_file_without_force
+test "Backup replaced regular file (--backup)" test_backup_replace_regular_file
 test "Nonexistent source file fails" test_nonexistent_source_file
 test "Non-executable source file fails" test_non_executable_source_file
 test "Source directory fails" test_source_file_is_directory
@@ -1221,6 +1303,15 @@ test "Debug flag creates trace file" test_debug_flag_creates_trace
 test "Debug via environment variable" test_debug_env_var
 test "Debug trace file content" test_debug_trace_content
 test "Symlink owner matches source" test_symlink_owner_matches_source
+
+# Critical-file protection
+test "Critical file skipped non-interactively" test_critical_file_noninteractive_skips
+test "Critical file interactive reject (pty)" test_critical_file_interactive_reject
+test "Critical file interactive confirm (pty)" test_critical_file_interactive_confirm
+
+# PATH-shadow advisory
+test "Shadow warns non-interactively" test_shadow_warns_noninteractive
+test "Shadow interactive reject (pty)" test_shadow_interactive_reject
 
 # Exit codes
 test "Exit code 0 on success" test_exit_code_success

@@ -269,7 +269,9 @@ create_symlink() {
   local -i was_replaced=0  # replacing an existing link/file must not also count as created
 
   # Get target filename - use custom name if provided, otherwise use basename
-  target_name="${custom_target_name:-$(basename "$source_path")}"
+  # ${var##*/} not basename: a source whose name starts with '-' would make
+  # basename treat it as an option, failing the command-sub and aborting set -e.
+  target_name="${custom_target_name:-${source_path##*/}}"
   target_path="${target_dir}/${target_name}"
   debug "create_symlink: $source_path → $target_path"
 
@@ -296,7 +298,7 @@ create_symlink() {
 
   # Get absolute path to source with timeout to prevent hanging
   local -- source_abs_path
-  source_abs_path=$(timeout 2 realpath -- "$source_path" 2>/dev/null)
+  source_abs_path=$(timeout 2 realpath -- "$source_path" 2>/dev/null) || source_abs_path=''
 
   if [[ -z "$source_abs_path" ]]; then
     error "Failed to resolve source path: '$source_path'"
@@ -376,7 +378,9 @@ create_symlink() {
     if [[ -L "$target_path" ]]; then
       # Check if it's already pointing to our target
       local -- current_target
-      current_target=$(realpath -- "$target_path" 2>/dev/null)
+      # errexit-safe: a broken/circular target makes realpath non-zero; without
+      # the guard, set -e + inherit_errexit would abort the whole run here.
+      current_target=$(realpath -- "$target_path" 2>/dev/null) || current_target=''
       if [[ "$current_target" == "$source_abs_path" ]]; then
         info "[DRY RUN] Would skip (already linked): '$source_abs_path' → '$target_path'"
         SKIPPED_LINKS+=("$source_path → $target_path (already exists)")
@@ -402,7 +406,9 @@ create_symlink() {
   # Handle existing symlink
   if [[ -L "$target_path" ]]; then
     local -- current_target
-    current_target=$(realpath -- "$target_path" 2>/dev/null)
+    # errexit-safe: a broken/circular target makes realpath non-zero; without
+    # the guard, set -e + inherit_errexit would abort the whole run here.
+    current_target=$(realpath -- "$target_path" 2>/dev/null) || current_target=''
 
     # Already pointing to our target — nothing to do
     if [[ "$current_target" == "$source_abs_path" ]]; then
@@ -426,11 +432,8 @@ create_symlink() {
       info "Removing existing symlink ${target_path@Q}"
     fi
 
-    if ! rm "$target_path"; then
-      error "Failed to remove existing symlink ${target_path@Q}"
-      ERROR_LINKS+=("$source_path → $target_path (remove failed)")
-      return 1
-    fi
+    # The existing symlink is replaced atomically by the final mv -fT below —
+    # no explicit rm here, so there is never a window where neither link exists.
     REPLACED_LINKS+=("$source_path → $target_path (replaced symlink)")
     was_replaced=1
   fi
@@ -438,7 +441,10 @@ create_symlink() {
   # Handle existing regular file (NOT a symlink — likely admin-installed, not
   # created by this tool). Destroying it is real data loss, so the default in
   # non-interactive mode is to SKIP unless -f/--force is given.
-  if [[ -e "$target_path" ]]; then
+  # NOTE: ! -L — an existing *symlink* was already handled above; since we no
+  # longer rm it there (atomic replace below), exclude it here so a live symlink
+  # is not misclassified as a regular file and wrongly skipped.
+  if [[ -e "$target_path" && ! -L "$target_path" ]]; then
     info "File exists ${target_path@Q}"
     if ((PROMPT)); then
       if ! yn "Remove existing file ${target_name@Q}?"; then
@@ -455,7 +461,9 @@ create_symlink() {
       return 0
     fi
 
-    # Back up before clobbering when requested; otherwise remove outright.
+    # Back up before clobbering when requested. Without --backup the existing
+    # file is replaced atomically by the final mv -fT below (it is never removed
+    # before the new link exists), so no explicit rm is needed here.
     if ((BACKUP)); then
       if mv -f -- "$target_path" "${target_path}.bak~"; then
         info "Backed up existing file to ${target_path@Q}.bak~"
@@ -464,20 +472,33 @@ create_symlink() {
         ERROR_LINKS+=("$source_path → $target_path (backup failed)")
         return 1
       fi
-    elif ! rm "$target_path"; then
-      error "Failed to remove existing file ${target_path@Q}"
-      ERROR_LINKS+=("$source_path → $target_path (remove failed)")
-      return 1
     fi
     REPLACED_LINKS+=("$source_path → $target_path (replaced file)")
     was_replaced=1
   fi
 
-  # Create the symbolic link
+  # Create the symbolic link atomically: build it under a temp name in the SAME
+  # directory, then mv -fT it over the target. rename(2) is atomic and never
+  # destroys an existing target before the replacement exists, so a failed ln
+  # (ENOSPC, race, read-only dir) can no longer leave neither file nor link.
   info "Creating symlink: '$source_abs_path' → '$target_path'"
-  if ! ln -s "$source_abs_path" "$target_path"; then
+  local -- tmp_link
+  tmp_link=$(mktemp -u "${target_dir}/.symlink-tmp-XXXXXX") || tmp_link=''
+  if [[ -z "$tmp_link" ]]; then
+    error "Failed to allocate temporary name in ${target_dir@Q}"
+    ERROR_LINKS+=("$source_path → $target_path (link failed)")
+    return 1
+  fi
+  if ! ln -s "$source_abs_path" "$tmp_link"; then
     error "Failed to create symlink ${target_path@Q}"
     ERROR_LINKS+=("$source_path → $target_path (link failed)")
+    rm -f "$tmp_link" 2>/dev/null || :
+    return 1
+  fi
+  if ! mv -fT "$tmp_link" "$target_path"; then
+    error "Failed to install symlink ${target_path@Q}"
+    ERROR_LINKS+=("$source_path → $target_path (link failed)")
+    rm -f "$tmp_link" 2>/dev/null || :
     return 1
   fi
 
@@ -500,7 +521,7 @@ change_symlink_owner_perms() {
   # /etc/group entries on freshly-extracted archives (UNKNOWN would break
   # symbolic chown on hosts where a uid/gid has no name mapping yet).
   local -- uidgid
-  uidgid=$(stat -c '%u:%g' "$source_abs_path")
+  uidgid=$(stat -c '%u:%g' "$source_abs_path" 2>/dev/null) || uidgid=''
   # Copy mtime from source to symlink
   debug "touch -h -r $source_abs_path $target_path"
   touch -h -r "$source_abs_path" "$target_path"
@@ -563,6 +584,30 @@ delete_broken_symlinks() {
 
   debug 'delete_broken_symlinks completed successfully'
   return 0
+}
+
+# --------------------------------------------------------------------------------
+# .symlink file discovery
+# --------------------------------------------------------------------------------
+# find_symlink_files STARTPATH [MODE_NAME]
+# Prints newline-separated paths of .symlink files at or below STARTPATH
+# (depth ≤ FIND_MAX_DEPTH). MODE_NAME ("scanning"/"listing") only tunes the
+# warning text. Returns non-zero when the underlying find fails (e.g. an
+# unreadable subtree) so the caller can tell a real scan error from a genuinely
+# empty result — output is empty in BOTH cases, the exit code is not.
+find_symlink_files() {
+  local -- startpath="${1%/}" mode_name="${2:-scanning}"
+  # Scanning in/under the target dir is dangerous (it would re-link the links we
+  # create), so restrict to the single direct .symlink file and warn.
+  if [[ "$startpath" == "$DEFAULT_TARGET_DIR" \
+        || "$startpath" == "$DEFAULT_TARGET_DIR"/* ]]; then
+    warn "${mode_name^} in target directory ($DEFAULT_TARGET_DIR) is not recommended"
+    [[ -f "$startpath/.symlink" ]] && printf '%s\n' "$startpath/.symlink" ||:
+    return 0
+  fi
+  # pipefail (set at top) makes the pipeline inherit find's failure status, so a
+  # permission-denied/IO error on the tree propagates instead of looking empty.
+  find "$startpath" -maxdepth "$FIND_MAX_DEPTH" -type f -name '.symlink' | sort -u
 }
 
 # --------------------------------------------------------------------------------
@@ -733,30 +778,13 @@ main() {
       local -- symlink
       debug "Finding .symlink files"
 
-      # First check if the startpath is actually /usr/local/bin or contains it
-      if [[ "$startpath" == "$DEFAULT_TARGET_DIR" \
-        || "$startpath" == "$DEFAULT_TARGET_DIR"/* ]]; then
-        # We're scanning in or below the target directory, which is dangerous
-        warn "Listing in target directory ($DEFAULT_TARGET_DIR) is not recommended"
-        # To be extra safe, we just find the direct .symlink file
-        if [[ -f "$startpath/.symlink" ]]; then
-          symlink_files=("$startpath/.symlink")
-        else
-          warn "No .symlink files found in ${startpath@Q}"
-          return 50
-        fi
-      else
-        # For standard directories, do a limited depth search
-          if ! mapfile -t symlink_files < <(
-              find "$startpath" -maxdepth "$FIND_MAX_DEPTH" \
-                  -type f -name '.symlink' 2>/dev/null \
-                | sort -u
-              ); then
-          die 1 "Error finding .symlink files for listing"
-        fi
-
-        (( ${#symlink_files[@]})) || die 50 "No .symlink files found in ${startpath@Q}"
-      fi
+      # Discover .symlink files. find_symlink_files surfaces a find failure as a
+      # real error (die 1), distinct from a genuinely empty tree (die 50).
+      local -- find_output=''
+      find_output=$(find_symlink_files "$startpath" listing) \
+        || die 1 "Error finding .symlink files for listing"
+      [[ -n "$find_output" ]] && mapfile -t symlink_files <<< "$find_output" ||:
+      (( ${#symlink_files[@]} )) || die 50 "No .symlink files found in ${startpath@Q}"
 
       debug "Found ${#symlink_files[@]} .symlink files for listing"
 
@@ -791,24 +819,13 @@ main() {
       die 3 "Cannot access directory ${startpath@Q}"
     fi
 
-    # First check if the startpath is actually /usr/local/bin or contains it
-    if [[ "$startpath" == "$DEFAULT_TARGET_DIR" || "$startpath" == "$DEFAULT_TARGET_DIR"/* ]]; then
-      # We're scanning in or below the target directory, which is dangerous
-      warn "Scanning in target directory ($DEFAULT_TARGET_DIR) is not recommended"
-      # To be extra safe, we just find the direct .symlink file
-      [[ -f "$startpath/.symlink" ]] || die 50 "No .symlink files found in ${startpath@Q}"
-      symlinks=("$startpath/.symlink")
-    else
-      # For standard directories, do a limited depth search
-      mapfile -t symlinks < <(
-          find "$startpath" -maxdepth "$FIND_MAX_DEPTH" \
-              -type f -name '.symlink' 2>/dev/null \
-            | sort -u
-          ) \
-        ||  die 1 "Error finding .symlink files"
-
-      (( ${#symlinks[@]} )) || die 50 "No .symlink files found in ${startpath@Q}"
-    fi
+    # Discover .symlink files. find_symlink_files surfaces a find failure as a
+    # real error (die 1), distinct from a genuinely empty tree (die 50).
+    local -- find_output=''
+    find_output=$(find_symlink_files "$startpath" scanning) \
+      || die 1 "Error finding .symlink files"
+    [[ -n "$find_output" ]] && mapfile -t symlinks <<< "$find_output" ||:
+    (( ${#symlinks[@]} )) || die 50 "No .symlink files found in ${startpath@Q}"
 
     debug "Found ${#symlinks[@]} .symlink files to process"
 
@@ -887,10 +904,10 @@ main() {
             if [[ -n "$remainder" ]]; then
               read -ra link_names <<< "$remainder"
             else
-              link_names=("$(basename "$source_file")")
+              link_names=("${source_file##*/}")
             fi
           else
-            link_names=("$(basename "$source_file")")
+            link_names=("${source_file##*/}")
           fi
 
           # Containment: .symlink content is trusted-but-verified. As root this
@@ -973,7 +990,7 @@ main() {
   # Return appropriate exit code
   if (( ${#ERROR_LINKS[@]} )); then
     ((exit_code)) || exit_code=1
-    warn "There were errors during processing. Please check the error log."
+    warn "There were errors during processing (see messages above)."
   elif (( ${#CREATED_LINKS[@]} == 0 && ${#REPLACED_LINKS[@]} == 0 )); then
     if (( ${#SKIPPED_LINKS[@]} )); then
       warn 'No symlinks created. All operations were skipped.'

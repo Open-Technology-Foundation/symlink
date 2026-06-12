@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2317  # Functions invoked indirectly via test framework
+# shellcheck disable=SC2317,SC2329  # Functions invoked indirectly via test framework
 # test-symlink - Comprehensive test suite for symlink script
 # Version: 1.0.0
 # License: GPL-3.0
@@ -35,13 +35,13 @@ teardown() {
 
 test_help_short() {
   run_symlink -h
-  assert_exit_code 0 echo "${TEST_EXIT_CODE}"
+  assert_equals 0 "${TEST_EXIT_CODE}"
   assert_contains "${TEST_OUTPUT}" "USAGE:"
 }
 
 test_help_long() {
   run_symlink --help
-  assert_exit_code 0 echo "${TEST_EXIT_CODE}"
+  assert_equals 0 "${TEST_EXIT_CODE}"
   assert_contains "${TEST_OUTPUT}" "USAGE:"
 }
 
@@ -49,7 +49,7 @@ test_version_short() {
   local -- expected
   expected=$(sed -n 's/^declare -r VERSION=//p' "${SYMLINK_BIN}")
   run_symlink -V
-  assert_exit_code 0 echo "${TEST_EXIT_CODE}"
+  assert_equals 0 "${TEST_EXIT_CODE}"
   assert_contains "${TEST_OUTPUT}" "${expected}"
 }
 
@@ -57,7 +57,7 @@ test_version_long() {
   local -- expected
   expected=$(sed -n 's/^declare -r VERSION=//p' "${SYMLINK_BIN}")
   run_symlink --version
-  assert_exit_code 0 echo "${TEST_EXIT_CODE}"
+  assert_equals 0 "${TEST_EXIT_CODE}"
   assert_contains "${TEST_OUTPUT}" "${expected}"
 }
 
@@ -163,7 +163,7 @@ test_list_mode() {
   run_symlink -l "${TEST_SOURCE_DIR}"
 
   assert_contains "${TEST_OUTPUT}" ".symlink"
-  assert_exit_code 0 echo "${TEST_EXIT_CODE}"
+  assert_equals 0 "${TEST_EXIT_CODE}"
 }
 
 test_scan_mode() {
@@ -243,7 +243,7 @@ test_create_new_symlink() {
 
   assert_symlink_created "test.sh"
   assert_symlink_points_to "test.sh" "${test_script}"
-  assert_exit_code 0 echo "${TEST_EXIT_CODE}"
+  assert_equals 0 "${TEST_EXIT_CODE}"
 }
 
 test_create_symlink_with_custom_name() {
@@ -675,11 +675,11 @@ test_scan_respects_max_depth() {
 
   run_symlink_sudo -S -P -t "${TEST_TARGET_DIR}" "${TEST_SOURCE_DIR}" || true
 
-  # Should not find deep .symlink file (beyond max depth)
-  # Exit code 50 = no symlink files found
-  if ((TEST_EXIT_CODE == 50)); then
-    assert_success echo "Correctly enforced max depth"
-  fi
+  # The only .symlink lives beyond FIND_MAX_DEPTH, so scan must find nothing:
+  # the deep link must NOT be created and the exit code must be 50 (no .symlink
+  # files found). Unconditional — if the depth guard regresses, this fails.
+  assert_file_not_exists "${TEST_TARGET_DIR}/deep.sh"
+  assert_equals 50 "${TEST_EXIT_CODE}"
 }
 
 test_list_mode_shows_symlink_files() {
@@ -691,7 +691,7 @@ test_list_mode_shows_symlink_files() {
 
   assert_contains "${TEST_OUTPUT}" ".symlink"
   assert_contains "${TEST_OUTPUT}" "test.sh"
-  assert_exit_code 0 echo "${TEST_EXIT_CODE}"
+  assert_equals 0 "${TEST_EXIT_CODE}"
 }
 
 test_scan_no_symlink_files_found() {
@@ -756,7 +756,7 @@ test_list_nested_symlink_files() {
 
   assert_contains "${TEST_OUTPUT}" "tool1.sh"
   assert_contains "${TEST_OUTPUT}" "tool2.sh"
-  assert_exit_code 0 echo "${TEST_EXIT_CODE}"
+  assert_equals 0 "${TEST_EXIT_CODE}"
 }
 
 #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -979,6 +979,72 @@ test_shadow_interactive_reject() {
 
   [[ ! -L "${TEST_TARGET_DIR}/sort" ]] || fail "shadow link created despite 'n' response"
   assert_contains "${TEST_OUTPUT}" "will shadow"
+}
+
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Containment / Security Boundary Tests
+# The .symlink source/link-name containment checks are the real security
+# boundary when scanning untrusted trees as root. These exercise it directly.
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+test_containment_rejects_absolute_source() {
+  # An absolute source must be refused (a hostile tree cannot publish a link to
+  # an arbitrary system path).
+  create_symlink_file "${TEST_SOURCE_DIR}/.symlink" "/etc/passwd evil"
+
+  run_symlink_sudo -S -P -t "${TEST_TARGET_DIR}" "${TEST_SOURCE_DIR}" || true
+
+  assert_file_not_exists "${TEST_TARGET_DIR}/evil"
+  assert_contains "${TEST_OUTPUT}" "Refusing source outside"
+  assert_equals 1 "${TEST_EXIT_CODE}"
+}
+
+test_containment_rejects_parent_escape() {
+  # A real, reachable executable outside the .symlink dir must still be refused
+  # when referenced via '../' — containment is about the path, not existence.
+  create_mock_executable "${TEST_ROOT}/outside.sh"
+  create_symlink_file "${TEST_SOURCE_DIR}/.symlink" "../outside.sh escapee"
+
+  run_symlink_sudo -S -P -t "${TEST_TARGET_DIR}" "${TEST_SOURCE_DIR}" || true
+
+  assert_file_not_exists "${TEST_TARGET_DIR}/escapee"
+  assert_contains "${TEST_OUTPUT}" "Refusing source outside"
+  assert_equals 1 "${TEST_EXIT_CODE}"
+}
+
+test_containment_rejects_unsafe_link_name() {
+  # A link name must be a bare filename — a path-bearing name (sub/bad) that
+  # would escape the target dir must be refused and create nothing.
+  local -r src="${TEST_SOURCE_DIR}/tool.sh"
+  create_mock_executable "${src}"
+  create_symlink_file "${TEST_SOURCE_DIR}/.symlink" "tool.sh sub/bad"
+
+  run_symlink_sudo -S -P -t "${TEST_TARGET_DIR}" "${TEST_SOURCE_DIR}" || true
+
+  assert_file_not_exists "${TEST_TARGET_DIR}/sub/bad"
+  assert_file_not_exists "${TEST_TARGET_DIR}/bad"
+  assert_contains "${TEST_OUTPUT}" "Refusing unsafe link name"
+  assert_equals 1 "${TEST_EXIT_CODE}"
+}
+
+# Elevation env-drop contract (M9/M10). A live non-root re-exec test would need
+# an unprivileged user with passwordless sudo, which is environment-specific and
+# fragile; instead assert the hardening directly on the source: the elevation
+# must forward only SYMLINK_DEBUG and must NOT use `sudo -E` (which would carry
+# SYMLINK_FORCE_CRITICAL across the privilege boundary unvalidated).
+test_elevation_does_not_forward_force_critical() {
+  local -- elevation_line
+  # Single quotes are intentional: the regex must match a literal $0 in the source.
+  # shellcheck disable=SC2016
+  elevation_line="$(grep -nE '^[[:space:]]*sudo .*"\$0"' "${SYMLINK_BIN}")"
+  assert_not_empty "${elevation_line}"
+  assert_contains "${elevation_line}" 'SYMLINK_DEBUG='
+  # Must NOT preserve the full environment across elevation.
+  [[ "${elevation_line}" != *'sudo -E'* ]] \
+    || fail "elevation uses 'sudo -E' — would leak SYMLINK_FORCE_CRITICAL across privilege boundary"
+  # Must NOT explicitly forward the critical-file override.
+  [[ "${elevation_line}" != *'SYMLINK_FORCE_CRITICAL'* ]] \
+    || fail "elevation forwards SYMLINK_FORCE_CRITICAL across privilege boundary"
 }
 
 #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1313,6 +1379,12 @@ test "Critical file interactive confirm (pty)" test_critical_file_interactive_co
 test "Shadow warns non-interactively" test_shadow_warns_noninteractive
 test "Shadow interactive reject (pty)" test_shadow_interactive_reject
 
+# Containment / security boundary
+test "Containment: reject absolute source" test_containment_rejects_absolute_source
+test "Containment: reject parent escape" test_containment_rejects_parent_escape
+test "Containment: reject unsafe link name" test_containment_rejects_unsafe_link_name
+test "Elevation drops SYMLINK_FORCE_CRITICAL" test_elevation_does_not_forward_force_critical
+
 # Exit codes
 test "Exit code 0 on success" test_exit_code_success
 test "Exit code 3 for file not found" test_exit_code_file_not_found
@@ -1349,6 +1421,15 @@ test "Summary dry-run format" test_summary_dry_run_format
 if ! is_root && ! has_sudo; then
   echo "ERROR: This test suite requires root access or sudo privileges"
   echo "Please run with: sudo ./test-symlink"
+  exit 1
+fi
+
+# script(1) (util-linux) is REQUIRED, not optional: the interactive yn()/dev/tty
+# safety tests run under a pty via script(1). Treating it as optional let the
+# entire interactive-safety matrix skip silently on hosts without it. Fail loud.
+if ! command -v script >/dev/null 2>&1; then
+  echo "ERROR: 'script' (util-linux) is required to run the interactive pty tests"
+  echo "Install it with: apt-get install bsdutils  (or util-linux)"
   exit 1
 fi
 

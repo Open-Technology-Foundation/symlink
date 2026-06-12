@@ -98,10 +98,10 @@ error() { >&2 _msg "$@"; }
 die() { (($# < 2)) || error "${@:2}"; exit "${1:-0}"; }
 # yes/no prompt
 yn() {
-  ((PROMPT)) || return 0
   local -- REPLY
-  read -r -n 1 -p "$SCRIPT_NAME: ${YELLOW}▲${NC} ${1:-'Continue?'} y/n " </dev/tty
-  echo
+  >&2 echo -n "$SCRIPT_NAME: $YELLOW▲$NC ${1:-Continue?} y/n "
+  read -r -n 1
+  >&2 echo
   [[ ${REPLY,,} == y ]]
 }
 
@@ -729,7 +729,7 @@ main() {
     # Check if target directory exists and is writable
     [[ -d "$target_dir" ]] || die 3 "Target directory does not exist ${target_dir@Q}"
 
-    [[ -w "$target_dir" ]] || die 2 "No write permission on target directory ${target_dir@Q}"
+    [[ -w "$target_dir" ]] || die 13 "No write permission on target directory ${target_dir@Q}"
   fi
 
   # Process .symlink files if -l or -S options were used
@@ -761,7 +761,7 @@ main() {
         realpath -- "$startpath" 2>/dev/null || echo ''
       )
 
-    [[ -n "$startpath" ]] || die 1 "Failed to resolve path (invalid or inaccessible)"
+    [[ -n "$startpath" ]] || die 13 "Failed to resolve path (invalid or inaccessible)"
 
     info "Resolved path ${startpath@Q}"
     [[ -d "$startpath" ]] || die 3 "Path is not a directory ${startpath@Q}"

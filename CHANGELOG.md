@@ -7,21 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.5.1] - 2026-11-27
 
-### Fixed
-- Interactive prompts during `-S` scans read their answer from the `.symlink`
-  file being processed, not the terminal: a following entry beginning with `y`
-  auto-confirmed the prompt (including critical-file replacement) and lost its
-  first character. `yn()` reads `/dev/tty` again (regression from the previous
-  commit); a pty regression test covers it.
-- Owner/mtime copy onto a new link is now checked; a failed `stat`, `touch` or
-  `chown` warns instead of passing silently.
-- An interrupted run no longer leaves a hidden `.symlink-tmp-*` link in the
-  target directory.
-- `--` guards on all pathname operands built from variables.
+A bug-fix release from a follow-up audit: safer link replacement, clearer
+failures, and a stronger test suite. No new options.
+
+### Added
+- Tests: containment boundary (absolute source, `../` escape, unsafe link
+  name); elevation never uses `sudo -E` or forwards `SYMLINK_FORCE_CRITICAL`;
+  prompts during `-S` read the terminal, not the `.symlink` file (92 → 97
+  tests).
 
 ### Changed
-- Permission failures exit with **13** (BCS "Permission denied"), not 2. Help
-  text, manpage and README updated to match.
+- Permission failures exit with **13** (BCS "Permission denied"), not 2.
+  Callers that test for exit 2 should test for 13. Help text, manpage and
+  README updated to match.
+- The test suite now requires `script(1)`, so the interactive pty tests can no
+  longer skip silently.
+
+### Fixed
+- **Atomic replacement** — a link is built under a temporary name and moved
+  over the target with `mv -fT`, so a failed `ln` can no longer leave neither
+  the original file nor the link. An interrupted run no longer leaves the
+  hidden `.symlink-tmp-*` link behind.
+- **Prompts read the terminal** — `yn()` reads `/dev/tty`. During `-S`, a
+  prompt could otherwise take its answer from the `.symlink` file being
+  processed: a following entry beginning with `y` auto-confirmed it, including
+  critical-file replacement. This regression existed only on `main` after
+  1.5.0; 1.5.0 itself is not affected.
+- A source whose name starts with `-` no longer aborts the batch.
+- A real `find` failure during `-S`/`-l` is reported (exit 1) instead of
+  looking like an empty tree (exit 50).
+- A broken or circular link target can no longer abort a run mid-operation.
+- Copying owner and mtime onto a new link is checked: a failed `stat`, `touch`
+  or `chown` warns instead of passing silently.
+- `--` guards on all pathname operands built from variables.
+- Removed a misleading "check the error log" message (there is no such log).
+- Tests: 8 vacuous assertions checked `echo`'s exit code instead of the
+  script's.
 
 ## [1.5.0] - 2026-05-31
 

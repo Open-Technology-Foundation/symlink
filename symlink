@@ -8,7 +8,7 @@ declare -rx PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
 # Enforce root privileges at the very beginning
 ((EUID==0)) || {
   sudo -ln &>/dev/null || {
-    >&2 echo "$(basename "$0"): error: Requires root," \
+    >&2 echo "$(basename -- "$0"): error: Requires root," \
       "or non-interactive sudo privileges."
     exit 1
   }
@@ -19,7 +19,7 @@ declare -rx PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
   exit "$?"
 }
 
-declare -r VERSION=1.5.0
+declare -r VERSION=1.5.1
 declare -- SCRIPT_PATH
 SCRIPT_PATH=$(realpath -- "$0")
 readonly SCRIPT_PATH
@@ -53,6 +53,7 @@ declare -a CREATED_LINKS=()
 declare -a REPLACED_LINKS=()
 declare -a SKIPPED_LINKS=()
 declare -a ERROR_LINKS=()
+declare -- TMP_LINK=''  # in-flight .symlink-tmp-* link; cleanup() removes it if interrupted
 
 # --------------------------------------------------------------------------------
 # Message functions and color support
@@ -98,9 +99,14 @@ error() { >&2 _msg "$@"; }
 die() { (($# < 2)) || error "${@:2}"; exit "${1:-0}"; }
 # yes/no prompt
 yn() {
-  local -- REPLY
+  # REPLY pre-set: if /dev/tty cannot be opened, read never assigns it and
+  # set -u would abort on the test below instead of treating it as "no".
+  local -- REPLY=''
   >&2 echo -n "$SCRIPT_NAME: $YELLOW▲$NC ${1:-Continue?} y/n "
-  read -r -n 1
+  # </dev/tty is load-bearing: during -S, create_symlink runs inside
+  # `while read ... done < .symlink`, so stdin is the .symlink file and a bare
+  # read would take its answer from the next entry (a leading 'y' auto-confirms).
+  read -r -n 1 </dev/tty
   >&2 echo
   [[ ${REPLY,,} == y ]]
 }
@@ -113,7 +119,10 @@ noarg() { (($# > 1)) || die 22 "Option ${1@Q} requires an argument"; }
 
 # cleanup - EXIT trap handler for finalization and debug logging
 cleanup() {
-  cd "$ORIG_DIR" 2>/dev/null || true
+  cd -- "$ORIG_DIR" 2>/dev/null || true
+  # Interrupted between ln and mv in create_symlink: drop the hidden temp link,
+  # which -d would never find (dotfile, and not broken).
+  [[ -z $TMP_LINK ]] || rm -f -- "$TMP_LINK" 2>/dev/null ||:
   if ((DEBUG)); then
     { echo "TRACE: Created links: ${#CREATED_LINKS[@]}"
       echo "TRACE: Replaced links: ${#REPLACED_LINKS[@]}"
@@ -140,7 +149,7 @@ if ((DEBUG)); then
   # mktemp creates the file with O_EXCL and mode 0600 — defeats a predictable
   # /tmp symlink-attack vector when running as root. TMPDIR lets tests isolate
   # traces into a private dir. Fall back to /dev/null on failure.
-  TRACEFILE=$(mktemp "${TMPDIR:-/tmp}/symlink-trace-$(whoami)-XXXXXX.log") || TRACEFILE=/dev/null
+  TRACEFILE=$(mktemp -- "${TMPDIR:-/tmp}/symlink-trace-$(whoami)-XXXXXX.log") || TRACEFILE=/dev/null
   { echo "TRACE: Script started at $(date -Is)"
     echo "TRACE: Arguments: $*"
     echo "TRACE: Working dir: $(pwd)"
@@ -197,7 +206,7 @@ SAFETY:
   • Symlink creation uses 2s path resolution timeout
 
 EXIT CODES:
-  0=success  1=error  2=permission  3=not found  22=bad option  50=no .symlink files
+  0=success  1=error  3=not found  13=permission  22=bad option  50=no .symlink files
 
 ENVIRONMENT:
   SYMLINK_DEBUG=1          Enable debug mode
@@ -258,7 +267,7 @@ shadowed_command() {
 # Core symlink operations
 # --------------------------------------------------------------------------------
 # create_symlink SOURCE TARGET_DIR [CUSTOM_NAME]
-# Creates symlink in TARGET_DIR pointing to SOURCE. Returns: 0=ok, 1=error, 2=perm, 3=notfound
+# Creates symlink in TARGET_DIR pointing to SOURCE. Returns: 0=ok, 1=error, 3=notfound, 13=perm
 # Updates global arrays: CREATED_LINKS, REPLACED_LINKS, SKIPPED_LINKS, ERROR_LINKS
 create_symlink() {
   local -- source_path=$1
@@ -324,7 +333,7 @@ create_symlink() {
       info "[DRY RUN] Would fail: No write permission on target directory ${target_dir@Q}"
       return 0
     fi
-    return 2
+    return 13
   fi
 
   # Check for critical system files
@@ -413,7 +422,8 @@ create_symlink() {
     # Already pointing to our target — nothing to do
     if [[ "$current_target" == "$source_abs_path" ]]; then
       info "Symlink already points to ${source_abs_path@Q}, skipping"
-      change_symlink_owner_perms "$source_abs_path" "$target_path"
+      # Best-effort metadata sync; any failure has already been warned about.
+      change_symlink_owner_perms "$source_abs_path" "$target_path" ||:
       SKIPPED_LINKS+=("$source_path → $target_path (already exists)")
       return 0
     fi
@@ -482,53 +492,69 @@ create_symlink() {
   # destroys an existing target before the replacement exists, so a failed ln
   # (ENOSPC, race, read-only dir) can no longer leave neither file nor link.
   info "Creating symlink: '$source_abs_path' → '$target_path'"
-  local -- tmp_link
-  tmp_link=$(mktemp -u "${target_dir}/.symlink-tmp-XXXXXX") || tmp_link=''
-  if [[ -z "$tmp_link" ]]; then
+  # The name lives in the global TMP_LINK so cleanup() can remove it if the
+  # script is interrupted between ln and mv.
+  TMP_LINK=$(mktemp -u -- "${target_dir}/.symlink-tmp-XXXXXX") || TMP_LINK=''
+  if [[ -z "$TMP_LINK" ]]; then
     error "Failed to allocate temporary name in ${target_dir@Q}"
     ERROR_LINKS+=("$source_path → $target_path (link failed)")
     return 1
   fi
-  if ! ln -s "$source_abs_path" "$tmp_link"; then
+  if ! ln -s -- "$source_abs_path" "$TMP_LINK"; then
     error "Failed to create symlink ${target_path@Q}"
     ERROR_LINKS+=("$source_path → $target_path (link failed)")
-    rm -f "$tmp_link" 2>/dev/null || :
+    rm -f -- "$TMP_LINK" 2>/dev/null || :
+    TMP_LINK=''
     return 1
   fi
-  if ! mv -fT "$tmp_link" "$target_path"; then
+  if ! mv -fT -- "$TMP_LINK" "$target_path"; then
     error "Failed to install symlink ${target_path@Q}"
     ERROR_LINKS+=("$source_path → $target_path (link failed)")
-    rm -f "$tmp_link" 2>/dev/null || :
+    rm -f -- "$TMP_LINK" 2>/dev/null || :
+    TMP_LINK=''
     return 1
   fi
+  TMP_LINK=''
 
   ((was_replaced)) || CREATED_LINKS+=("$source_path → $target_path")
   success "Created symlink ${target_name@Q}"
 
-  change_symlink_owner_perms "$source_abs_path" "$target_path"
+  # Best-effort metadata sync; any failure has already been warned about.
+  change_symlink_owner_perms "$source_abs_path" "$target_path" ||:
 
   # Show details of the created symlink if verbose
-  ((VERBOSE)) && { ls -lsd -- "$target_path" >&2 || :; }
+  ((VERBOSE)) && >&2 ls -lsd -- "$target_path" ||:
 
   return 0
 }
 
 # change_symlink_owner_perms SOURCE_PATH SYMLINK_PATH
-# Copies owner, group, and mtime from source to symlink (not file mode bits)
+# Copies owner, group, and mtime from source to symlink (not file mode bits).
+# Returns 1, after a warning, if any step fails. Callers run with errexit
+# suspended (create_symlink is always called on the left of ||), so each step
+# is checked here rather than left to set -e.
 change_symlink_owner_perms() {
   local -- source_abs_path="$1" target_path="$2"
+  local -i rc=0
   # Get numeric owner/group — robust against missing /etc/passwd or
   # /etc/group entries on freshly-extracted archives (UNKNOWN would break
   # symbolic chown on hosts where a uid/gid has no name mapping yet).
   local -- uidgid
-  uidgid=$(stat -c '%u:%g' "$source_abs_path" 2>/dev/null) || uidgid=''
+  uidgid=$(stat -c '%u:%g' -- "$source_abs_path" 2>/dev/null) || uidgid=''
   # Copy mtime from source to symlink
   debug "touch -h -r $source_abs_path $target_path"
-  touch -h -r "$source_abs_path" "$target_path"
+  touch -h -r "$source_abs_path" -- "$target_path" \
+    || { warn "Failed to copy mtime to ${target_path@Q}"; rc=1; }
+  # An empty spec would make chown a silent no-op, so report it instead.
+  if [[ -z "$uidgid" ]]; then
+    warn "Cannot read owner of ${source_abs_path@Q}; ownership not copied to ${target_path@Q}"
+    return 1
+  fi
   # Change ownership of the symlink to match the source (numeric)
   debug "chown -h $uidgid $target_path"
-  chown -h "$uidgid" "$target_path"
-  return 0
+  chown -h -- "$uidgid" "$target_path" \
+    || { warn "Failed to set owner $uidgid on ${target_path@Q}"; rc=1; }
+  return "$rc"
 }
 
 
@@ -573,7 +599,7 @@ delete_broken_symlinks() {
     [[ -e "$link" ]] && continue || :
     # This is a broken symlink - delete it
     info "Deleting broken symlink ${link@Q}"
-    if rm "$link"; then
+    if rm -- "$link"; then
       count+=1
     else
       warn "Failed to delete broken symlink ${link@Q}"
@@ -737,7 +763,7 @@ main() {
     # Allow only one startpath for listing or scanning operations
     local -- mode_name
     mode_name=$( ((LISTIT)) && echo "listing" || echo "scanning" )
-    ((${#targets[@]} > 1)) && die 1 \
+    ((${#targets[@]} < 2)) || die 1 \
       "Can only specify one startpath for ${mode_name}."
 
     local -- startpath="$ORIG_DIR" symlink
@@ -767,7 +793,7 @@ main() {
     [[ -d "$startpath" ]] || die 3 "Path is not a directory ${startpath@Q}"
 
     # Ensure the path exists and is accessible
-    [[ -x "$startpath" ]] || die 2 "Path exists but is not accessible ${startpath@Q}"
+    [[ -x "$startpath" ]] || die 13 "Path exists but is not accessible ${startpath@Q}"
 
     # Handle the -l (list) option - just show contents of .symlink files
     if ((LISTIT)); then
@@ -852,7 +878,7 @@ main() {
     for ((batch=0; batch<batch_count; batch+=1)); do
       start=$((batch * batch_size))
       end=$(( (batch + 1) * batch_size ))
-      (( end > total )) && end=$total
+      ((end <= total)) || end=$total
 
       info "Processing batch $((batch+1))/$batch_count"
       debug "Processing files $((start+1))-$end of $total"
@@ -982,7 +1008,11 @@ main() {
   fi
 
   # Optionally clean up broken symlinks
-  ((DELETE_DEAD_SYMLINKS)) && delete_broken_symlinks "$target_dir"
+  # if-block, not `&& ... ||:`: keeps errexit live inside the call and does not
+  # mask a failure from it.
+  if ((DELETE_DEAD_SYMLINKS)); then
+    delete_broken_symlinks "$target_dir"
+  fi
 
   # Print summary of operations
   print_summary

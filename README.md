@@ -1,6 +1,6 @@
 # Symlink Utility
 
-![Version](https://img.shields.io/badge/Version-1.5.0-blue.svg)
+![Version](https://img.shields.io/badge/Version-1.5.1-blue.svg)
 ![License](https://img.shields.io/badge/License-GPL--3.0-green.svg)
 
 A Bash utility that creates symbolic links in `/usr/local/bin` for executables, making them accessible system-wide. Designed for managing scripts across multiple directories with built-in safety and batch processing.
@@ -127,8 +127,8 @@ Hard-protects a list of critical system binaries (`bash`, `sudo`, `ssh`, `rm`, â
 |------|---------|
 | 0 | Success |
 | 1 | General error |
-| 2 | Permission denied |
 | 3 | File not found |
+| 13 | Permission denied |
 | 22 | Invalid option |
 | 50 | No symlink files found |
 

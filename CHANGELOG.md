@@ -5,6 +5,24 @@ All notable changes to **symlink** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.1] - 2026-11-27
+
+### Fixed
+- Interactive prompts during `-S` scans read their answer from the `.symlink`
+  file being processed, not the terminal: a following entry beginning with `y`
+  auto-confirmed the prompt (including critical-file replacement) and lost its
+  first character. `yn()` reads `/dev/tty` again (regression from the previous
+  commit); a pty regression test covers it.
+- Owner/mtime copy onto a new link is now checked; a failed `stat`, `touch` or
+  `chown` warns instead of passing silently.
+- An interrupted run no longer leaves a hidden `.symlink-tmp-*` link in the
+  target directory.
+- `--` guards on all pathname operands built from variables.
+
+### Changed
+- Permission failures exit with **13** (BCS "Permission denied"), not 2. Help
+  text, manpage and README updated to match.
+
 ## [1.5.0] - 2026-05-31
 
 A safety- and robustness-focused release driven by a full code audit. Adds
@@ -74,6 +92,7 @@ privileged path, and repairs significant test-suite rot.
 - `.symlink` batch processing, auto-sudo elevation, critical-file protection,
   dry-run mode, broken-symlink cleanup, and the BCS-compliant test suite.
 
+[1.5.1]: https://github.com/Open-Technology-Foundation/symlink/releases/tag/v1.5.1
 [1.5.0]: https://github.com/Open-Technology-Foundation/symlink/releases/tag/v1.5.0
 [1.4.1]: https://github.com/Open-Technology-Foundation/symlink/releases/tag/v1.4.1
 [1.4.0]: https://github.com/Open-Technology-Foundation/symlink/releases/tag/v1.4.0

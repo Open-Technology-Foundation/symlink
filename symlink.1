@@ -1,7 +1,7 @@
 .\" Symlink Manual Page
 .\" Generated: 2026-03-08
 .\"
-.TH SYMLINK 1 "May 2026" "symlink 1.5.0" "User Commands"
+.TH SYMLINK 1 "November 2026" "symlink 1.5.1" "User Commands"
 .\"
 .SH NAME
 symlink \- create symlinks in /usr/local/bin for executables
@@ -239,11 +239,11 @@ Success.
 .B 1
 General error.
 .TP
-.B 2
-Permission denied.
-.TP
 .B 3
 File not found.
+.TP
+.B 13
+Permission denied (EACCES).
 .TP
 .B 22
 Invalid option (EINVAL).

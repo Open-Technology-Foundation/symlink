@@ -952,6 +952,24 @@ test_critical_file_interactive_confirm() {
   assert_contains "${TEST_OUTPUT}" "explicitly confirmed"
 }
 
+test_scan_prompt_reads_tty_not_symlink_file() {
+  # Regression: during -S, create_symlink runs inside `done < .symlink`, so a
+  # yn() that reads stdin takes its answer from the next .symlink entry. Here
+  # the entry after the critical 'ls' starts with 'y': a stdin-reading yn()
+  # would auto-confirm replacing 'ls' and mangle 'yfirst' into 'first'.
+  command -v script >/dev/null 2>&1 || { skip "script(1) not available for pty test"; return 0; }
+  create_mock_executable "${TEST_SOURCE_DIR}/ls"
+  create_mock_executable "${TEST_SOURCE_DIR}/yfirst"
+  create_symlink_file "${TEST_SOURCE_DIR}/.symlink" "ls" "yfirst"
+
+  # Feed 'n' on the terminal at the critical-file prompt
+  run_symlink_pty 'n' -S -t "${TEST_TARGET_DIR}" "${TEST_SOURCE_DIR}"
+
+  [[ ! -L "${TEST_TARGET_DIR}/ls" ]] || fail "critical file linked: prompt answer came from .symlink, not the tty"
+  assert_symlink_to "${TEST_TARGET_DIR}/yfirst" "${TEST_SOURCE_DIR}/yfirst"
+  [[ "${TEST_OUTPUT}" != *"does not exist"* ]] || fail ".symlink entry mangled by prompt read: ${TEST_OUTPUT}"
+}
+
 #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # PATH-shadow advisory tests (non-critical names that override a PATH command)
 #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1374,6 +1392,7 @@ test "Symlink owner matches source" test_symlink_owner_matches_source
 test "Critical file skipped non-interactively" test_critical_file_noninteractive_skips
 test "Critical file interactive reject (pty)" test_critical_file_interactive_reject
 test "Critical file interactive confirm (pty)" test_critical_file_interactive_confirm
+test "Scan prompt reads tty, not .symlink (pty)" test_scan_prompt_reads_tty_not_symlink_file
 
 # PATH-shadow advisory
 test "Shadow warns non-interactively" test_shadow_warns_noninteractive
